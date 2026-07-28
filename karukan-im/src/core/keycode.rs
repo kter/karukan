@@ -10,6 +10,11 @@ impl Keysym {
     // Common key symbols (XKB keysym values)
     pub const BACKSPACE: Keysym = Keysym(0xff08);
     pub const TAB: Keysym = Keysym(0xff09);
+    /// Shift+Tab as delivered by frontends that don't normalize it
+    /// (XK_ISO_Left_Tab). fcitx5 normalizes Shift+Tab to `TAB` + shift via
+    /// `Key::normalize()`, and macOS sends keycode 48 → `TAB` + shift, so this
+    /// is defensive compatibility rather than the primary path.
+    pub const ISO_LEFT_TAB: Keysym = Keysym(0xfe20);
     pub const RETURN: Keysym = Keysym(0xff0d);
     pub const ESCAPE: Keysym = Keysym(0xff1b);
     pub const DELETE: Keysym = Keysym(0xffff);

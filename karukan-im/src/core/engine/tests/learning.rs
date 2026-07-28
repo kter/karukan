@@ -1,7 +1,7 @@
-//! Tests for the learning cache and the Tab-skips-learning behavior.
+//! Tests for the learning cache and conversion-key learning behavior.
 //!
-//! Space/Down: include learning candidates (default conversion).
-//! Tab: skip learning candidates (lets users escape stale learned entries).
+//! Space/Down/Tab: include learning candidates (default conversion).
+//! Shift+Tab: skip learning candidates (lets users escape stale learned entries).
 //! Ctrl+Delete: delete the selected learning candidate from the history.
 
 use karukan_engine::{LearningCache, LearningConfig};
@@ -51,21 +51,21 @@ fn build_candidates_omits_learning_when_skipped() {
 
     assert!(
         !texts.contains(&"藍".to_string()),
-        "Tab path (skip_learning=true) must drop learned `藍`, got {:?}",
+        "Shift+Tab path (skip_learning=true) must drop learned `藍`, got {:?}",
         texts,
     );
 }
 
 #[test]
-fn tab_key_skips_learning_in_composing() {
-    // End-to-end: type the reading, press Tab → learned candidate is gone.
+fn shift_tab_key_skips_learning_in_composing() {
+    // End-to-end: type the reading, press Shift+Tab → learned candidate is gone.
     let mut engine = engine_with_learned("あい", "藍");
 
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     assert_eq!(engine.input_buf.text, "あい");
 
-    let result = engine.process_key(&press_key(Keysym::TAB));
+    let result = engine.process_key(&press_shift_key(Keysym::TAB));
     assert!(result.consumed);
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
 
@@ -79,9 +79,52 @@ fn tab_key_skips_learning_in_composing() {
         .collect();
     assert!(
         !texts.contains(&"藍".to_string()),
-        "Tab must skip the learned `藍` candidate, got {:?}",
+        "Shift+Tab must skip the learned `藍` candidate, got {:?}",
         texts,
     );
+}
+
+#[test]
+fn iso_left_tab_key_skips_learning_in_composing() {
+    let mut engine = engine_with_learned("あい", "藍");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+
+    let result = engine.process_key(&press_key(Keysym::ISO_LEFT_TAB));
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let texts: Vec<String> = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .map(|c| c.text.clone())
+        .collect();
+    assert!(
+        !texts.contains(&"藍".to_string()),
+        "ISO_Left_Tab must skip the learned `藍` candidate, got {:?}",
+        texts,
+    );
+}
+
+#[test]
+fn tab_key_includes_learning_in_composing() {
+    let mut engine = engine_with_learned("あい", "藍");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+
+    let result = engine.process_key(&press_key(Keysym::TAB));
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.cursor(), 0);
+    assert_eq!(candidates.candidates()[0].text, "藍");
+    assert_eq!(candidates.selected().unwrap().text, "藍");
 }
 
 #[test]
@@ -449,8 +492,8 @@ fn aux_shows_delete_hint_only_for_learning_candidate() {
 
 #[test]
 fn space_key_keeps_learning_in_composing() {
-    // Counterpart to tab_key_skips_learning_in_composing: Space stays on the
-    // learning-included path so the default UX is unchanged.
+    // Counterpart to shift_tab_key_skips_learning_in_composing: Space stays on
+    // the learning-included path so the default UX is unchanged.
     let mut engine = engine_with_learned("あい", "藍");
 
     engine.process_key(&press('a'));

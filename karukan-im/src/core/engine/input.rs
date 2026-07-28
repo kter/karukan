@@ -270,11 +270,12 @@ impl InputMethodEngine {
             Keysym::BACKSPACE => self.backspace_composing(),
             Keysym::DELETE => self.delete_composing(),
             Keysym::SPACE if self.mode.current() == InputMode::Alphabet => self.input_char(' '),
-            // Tab triggers conversion that bypasses the learning cache, so users
-            // can escape stale or unwanted learned entries (mozc binds Tab to a
-            // different conversion path — PredictAndConvert — in the same spirit).
-            Keysym::TAB => self.start_conversion(true),
-            Keysym::SPACE | Keysym::DOWN => self.start_conversion(false),
+            // Shift+Tab bypasses the learning cache so users can escape stale or
+            // unwanted learned entries (mozc's PredictAndConvert path).
+            Keysym::TAB if shift_active => self.start_conversion(true),
+            Keysym::ISO_LEFT_TAB => self.start_conversion(true),
+            // Tab follows the displayed prediction, just like Space/Down.
+            Keysym::TAB | Keysym::SPACE | Keysym::DOWN => self.start_conversion(false),
             Keysym::LEFT => self.move_caret_left(),
             Keysym::RIGHT => self.move_caret_right(),
             Keysym::HOME => self.move_caret_home(),

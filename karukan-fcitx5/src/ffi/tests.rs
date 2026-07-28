@@ -12,6 +12,9 @@ const XKB_KEY_K: u32 = 0x6b;
 const XKB_KEY_RETURN: u32 = 0xff0d;
 const XKB_KEY_ESCAPE: u32 = 0xff1b;
 const XKB_KEY_BACKSPACE: u32 = 0xff08;
+const XKB_KEY_SPACE: u32 = 0x20;
+const XKB_KEY_TAB: u32 = 0xff09;
+const XKB_KEY_ISO_LEFT_TAB: u32 = 0xfe20;
 const XKB_KEY_SHIFT_L: u32 = 0xffe1;
 const XKB_KEY_LOWER_L: u32 = 0x6c;
 const SHIFT_MASK: u32 = karukan_im::core::keycode::KeyModifiers::SHIFT_MASK;
@@ -254,6 +257,34 @@ fn test_conversion_timing() {
     // Just verify the getter works and returns a reasonable value (0 or positive)
     let timing = karukan_engine_get_last_conversion_ms(e.ptr());
     assert!(timing < 60000); // Should be less than 60 seconds
+}
+
+#[test]
+fn test_ffi_shift_tab_navigates_backward() {
+    let e = TestEngine::new();
+    disable_live_conversion(&e);
+
+    // Enter Conversion with enough ordinary fallback candidates to navigate.
+    e.press(XKB_KEY_A);
+    e.press(XKB_KEY_I);
+    assert!(e.press(XKB_KEY_SPACE));
+    assert!(e.has_candidates());
+    assert!(karukan_engine_get_candidate_count(e.ptr()) >= 2);
+    assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 0);
+
+    // Plain Tab moves forward.
+    assert!(e.press(XKB_KEY_TAB));
+    assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 1);
+
+    // Tab plus the FFI Shift mask takes the Shift+Tab arm and moves backward.
+    assert!(e.press_with(XKB_KEY_TAB, SHIFT_MASK));
+    assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 0);
+
+    // The raw ISO_Left_Tab compatibility shape also moves backward.
+    assert!(e.press(XKB_KEY_TAB));
+    assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 1);
+    assert!(e.press(XKB_KEY_ISO_LEFT_TAB));
+    assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 0);
 }
 
 #[test]

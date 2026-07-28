@@ -69,3 +69,27 @@ fn test_alphabet_mode_space_inserts_literal_space() {
     engine.process_key(&press('k'));
     assert_eq!(engine.preedit().unwrap().text(), "New york");
 }
+
+#[test]
+fn test_tab_navigation_in_conversion() {
+    let mut engine = InputMethodEngine::new();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    assert!(engine.state().candidates().unwrap().len() >= 2);
+    assert_eq!(engine.state().candidates().unwrap().cursor(), 0);
+
+    engine.process_key(&press_key(Keysym::TAB));
+    assert_eq!(engine.state().candidates().unwrap().cursor(), 1);
+
+    engine.process_key(&press_shift_key(Keysym::TAB));
+    assert_eq!(engine.state().candidates().unwrap().cursor(), 0);
+
+    engine.process_key(&press_key(Keysym::TAB));
+    assert_eq!(engine.state().candidates().unwrap().cursor(), 1);
+
+    engine.process_key(&press_key(Keysym::ISO_LEFT_TAB));
+    assert_eq!(engine.state().candidates().unwrap().cursor(), 0);
+}

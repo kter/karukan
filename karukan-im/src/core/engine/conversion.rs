@@ -178,8 +178,8 @@ impl InputMethodEngine {
     /// result is preserved as the first model candidate so the user sees
     /// the same text they had been looking at during input.
     ///
-    /// `skip_learning` is set by the Tab path to omit learning-cache
-    /// candidates (Space/Down keep the default learning-included behavior).
+    /// `skip_learning` is set by the Shift+Tab path to omit learning-cache
+    /// candidates (Space/Down/Tab keep the default learning-included behavior).
     pub(super) fn start_conversion(&mut self, skip_learning: bool) -> EngineResult {
         // Flush any remaining romaji into composed_hiragana
         self.flush_romaji_to_composed();
@@ -327,9 +327,9 @@ impl InputMethodEngine {
     ///
     /// Priority: Learning → User Dictionary → Model → System Dictionary → Fallback
     ///
-    /// `skip_learning` suppresses the learning-cache step (1). Used by the Tab
-    /// key path so users can escape a noisy learning history without losing
-    /// access to dictionary/model candidates.
+    /// `skip_learning` suppresses the learning-cache step (1). Used by the
+    /// Shift+Tab key path so users can escape a noisy learning history without
+    /// losing access to dictionary/model candidates.
     pub(super) fn build_conversion_candidates(
         &mut self,
         reading: &str,
@@ -357,7 +357,7 @@ impl InputMethodEngine {
 
         // 1. Learning cache candidates (highest priority).
         //    Force-inserted so they win against duplicate text from later sources.
-        //    Skipped when the caller asks for a learning-free conversion (Tab key).
+        //    Skipped when the caller asks for a learning-free conversion (Shift+Tab).
         if !skip_learning {
             for c in self.lookup_learning_candidates(reading) {
                 // Exact matches have reading == input reading; use None to avoid redundancy
@@ -574,6 +574,8 @@ impl InputMethodEngine {
         match key.keysym {
             Keysym::RETURN => self.commit_conversion(),
             Keysym::ESCAPE => self.cancel_conversion(),
+            Keysym::TAB if key.modifiers.shift_key => self.prev_candidate(),
+            Keysym::ISO_LEFT_TAB => self.prev_candidate(),
             Keysym::SPACE | Keysym::DOWN | Keysym::TAB => self.next_candidate(),
             Keysym::UP => self.prev_candidate(),
             Keysym::PAGE_DOWN => self.next_candidate_page(),

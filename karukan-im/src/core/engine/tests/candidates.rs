@@ -27,6 +27,24 @@ fn test_live_text_preserved_in_conversion_via_down() {
 }
 
 #[test]
+fn test_live_text_selected_first_in_conversion_via_tab() {
+    let mut engine = make_live_conversion_engine();
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.live.text = "愛".to_string();
+
+    let result = engine.process_key(&press_key(Keysym::TAB));
+    assert!(result.consumed);
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+
+    let candidates = engine.state().candidates().unwrap();
+    assert_eq!(candidates.cursor(), 0);
+    assert_eq!(candidates.candidates()[0].text, "愛");
+    assert_eq!(candidates.selected().unwrap().text, "愛");
+}
+
+#[test]
 fn test_live_text_not_duplicated_in_conversion() {
     // If the live_text matches the reading, it should not be duplicated
     let mut engine = make_live_conversion_engine();

@@ -18,6 +18,13 @@ final class KeyCodeMapTests: XCTestCase {
         XCTAssertEqual(event?.modifiers.shift, true)
     }
 
+    func testShiftTab() {
+        let event = KeyCodeMap.translate(
+            keyCode: 48, characters: "\t", charactersIgnoringModifiers: "\t", flags: [.shift])
+        XCTAssertEqual(event?.keysym, 0xff09)
+        XCTAssertEqual(event?.modifiers.shift, true)
+    }
+
     func testShiftedPunctuation() {
         // IMK key events resolve Shift only in `characters`: Shift+/ comes
         // in as characters="?" but charactersIgnoringModifiers="/". The
