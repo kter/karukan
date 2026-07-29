@@ -250,18 +250,37 @@ impl InputMethodEngine {
         )
     }
 
+    /// Split the input reading into the conversion target and the unconverted
+    /// remainder. `target_len` is measured in characters, not UTF-8 bytes.
+    fn split_target(&self, target_len: usize) -> (String, String) {
+        let mut chars = self.input_buf.text.chars();
+        let target = chars.by_ref().take(target_len).collect();
+        let rest = chars.collect();
+        (target, rest)
+    }
+
     /// Transition to Conversion state with the given reading and candidate list.
+    ///
+    /// `reading` must be a prefix of `self.input_buf.text`; the unconverted
+    /// remainder is derived by splitting the input buffer after that prefix.
     ///
     /// Sets up the preedit (highlighted selected text), updates the state, and
     /// returns an EngineResult with preedit, candidates, and aux text actions.
     fn enter_conversion_state(&mut self, reading: &str, candidates: CandidateList) -> EngineResult {
         let selected_text = candidates.selected_text().unwrap_or(reading).to_string();
+        let target_len = reading.chars().count();
+        let (_, rest) = self.split_target(target_len);
 
-        let preedit = Preedit::with_text_highlighted(&selected_text);
+        let mut segments = vec![PreeditSegment::highlighted(&selected_text)];
+        if !rest.is_empty() {
+            segments.push(PreeditSegment::new(&rest, AttributeType::Underline));
+        }
+        let preedit = Preedit::from_segments(segments, selected_text.chars().count());
 
         self.state = InputState::Conversion {
             preedit: preedit.clone(),
             candidates: candidates.clone(),
+            target_len,
         };
 
         EngineResult::consumed()
@@ -574,6 +593,8 @@ impl InputMethodEngine {
         match key.keysym {
             Keysym::RETURN => self.commit_conversion(),
             Keysym::ESCAPE => self.cancel_conversion(),
+            Keysym::LEFT if key.modifiers.shift_key => self.resize_target(-1),
+            Keysym::RIGHT if key.modifiers.shift_key => self.resize_target(1),
             Keysym::TAB if key.modifiers.shift_key => self.prev_candidate(),
             Keysym::ISO_LEFT_TAB => self.prev_candidate(),
             Keysym::SPACE | Keysym::DOWN | Keysym::TAB => self.next_candidate(),
@@ -623,6 +644,35 @@ impl InputMethodEngine {
         }
     }
 
+    /// Resize the conversion target by a character and rebuild its candidates.
+    fn resize_target(&mut self, delta: i32) -> EngineResult {
+        let target_len = match self.state {
+            InputState::Conversion { target_len, .. } => target_len,
+            _ => return EngineResult::not_consumed(),
+        };
+        let total_len = self.input_buf.text.chars().count();
+        if total_len == 0 {
+            return EngineResult::consumed();
+        }
+        let Some(resized) = target_len.checked_add_signed(delta as isize) else {
+            return EngineResult::consumed();
+        };
+        let resized = resized.clamp(1, total_len);
+        if resized == target_len {
+            return EngineResult::consumed();
+        }
+
+        let (reading, _) = self.split_target(resized);
+        let candidates =
+            self.build_conversion_candidates(&reading, self.config.num_candidates, false);
+        if candidates.is_empty() {
+            return EngineResult::consumed();
+        }
+
+        let candidate_list = Self::to_conversion_candidate_list(candidates, &reading);
+        self.enter_conversion_state(&reading, candidate_list)
+    }
+
     /// Get selected text and reading from conversion state, or None if not in conversion
     pub(super) fn selected_conversion_info(&self) -> Option<(String, Option<String>)> {
         match &self.state {
@@ -669,12 +719,61 @@ impl InputMethodEngine {
             return EngineResult::consumed();
         }
 
+        if let Some(result) = self.commit_partial_conversion(&text) {
+            return result;
+        }
+
         self.finish_conversion(&text, &reading);
 
         EngineResult::consumed()
             .with_action(EngineAction::HideCandidates)
             .with_action(EngineAction::HideAuxText)
             .with_action(EngineAction::Commit(text))
+    }
+
+    /// Commit a shortened target and immediately start conversion of the
+    /// remaining reading. Returns `None` when the current target is the whole
+    /// reading so callers can keep their existing full-commit behavior.
+    fn commit_partial_conversion(&mut self, text: &str) -> Option<EngineResult> {
+        let target_len = match self.state {
+            InputState::Conversion { target_len, .. } => target_len,
+            _ => return None,
+        };
+        let total_len = self.input_buf.text.chars().count();
+        if target_len >= total_len {
+            return None;
+        }
+
+        let (reading, rest) = self.split_target(target_len);
+        if self.mode.current() != InputMode::Emoji {
+            self.record_learning(&reading, text);
+        }
+
+        let context = self.surrounding_context.get_or_insert(SurroundingContext {
+            left: None,
+            right: None,
+        });
+        context.left.get_or_insert_default().push_str(text);
+
+        self.input_buf.text = rest.clone();
+        self.input_buf.cursor_pos = 0;
+
+        let candidates = self.build_conversion_candidates(&rest, self.config.num_candidates, false);
+        let candidates = if candidates.is_empty() {
+            vec![AnnotatedCandidate::new(
+                rest.clone(),
+                CandidateSource::Fallback,
+            )]
+        } else {
+            candidates
+        };
+        let candidate_list = Self::to_conversion_candidate_list(candidates, &rest);
+        let continuation = self.enter_conversion_state(&rest, candidate_list);
+
+        let mut result =
+            EngineResult::consumed().with_action(EngineAction::Commit(text.to_string()));
+        result.actions.extend(continuation.actions);
+        Some(result)
     }
 
     /// Commit current conversion and then process a new character as fresh input
@@ -728,7 +827,11 @@ impl InputMethodEngine {
         // prefix-matched candidate carries a longer reading of its own, but
         // every entry that surfaces it has the typed reading as a prefix, so
         // removing by the typed reading clears the shown row and its twins.
-        let reading = self.input_buf.text.clone();
+        let target_len = match self.state {
+            InputState::Conversion { target_len, .. } => target_len,
+            _ => return EngineResult::consumed(),
+        };
+        let (reading, _) = self.split_target(target_len);
         let removed = self
             .learning
             .as_mut()
@@ -843,6 +946,10 @@ impl InputMethodEngine {
             (text, reading)
         };
 
+        if let Some(result) = self.commit_partial_conversion(&selected_text) {
+            return result;
+        }
+
         // Record learning before committing
         if let Some(reading) = &reading {
             self.record_learning(reading, &selected_text);
@@ -864,7 +971,16 @@ impl InputMethodEngine {
         selected_text: &str,
         candidates: &CandidateList,
     ) -> EngineResult {
-        let preedit = Preedit::with_text_highlighted(selected_text);
+        let target_len = match self.state {
+            InputState::Conversion { target_len, .. } => target_len,
+            _ => return EngineResult::not_consumed(),
+        };
+        let (_, rest) = self.split_target(target_len);
+        let mut segments = vec![PreeditSegment::highlighted(selected_text)];
+        if !rest.is_empty() {
+            segments.push(PreeditSegment::new(&rest, AttributeType::Underline));
+        }
+        let preedit = Preedit::from_segments(segments, selected_text.chars().count());
 
         if let Some(p) = self.state.preedit_mut() {
             *p = preedit.clone();

@@ -308,6 +308,34 @@ fn ctrl_backspace_deletes_learning_entry_like_ctrl_delete() {
 }
 
 #[test]
+fn ctrl_backspace_after_resize_deletes_by_target_reading() {
+    let mut engine = engine_with_learned("あ", "亜");
+    engine.learning.as_mut().unwrap().record("あい", "愛");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    let selected = engine.state().candidates().unwrap().selected().unwrap();
+    assert_eq!(selected.text, "亜");
+    assert!(selected.is_deletable());
+
+    let result = engine.process_key(&press_ctrl(Keysym::BACKSPACE));
+
+    assert!(result.consumed);
+    assert!(engine.learning.as_ref().unwrap().lookup("あ").is_empty());
+    assert!(
+        !engine.learning.as_ref().unwrap().lookup("あい").is_empty(),
+        "deleting the target reading must not delete an unrelated full-reading entry"
+    );
+    assert!(matches!(
+        engine.state(),
+        InputState::Conversion { target_len: 1, .. }
+    ));
+}
+
+#[test]
 fn ctrl_backspace_does_nothing_for_non_learning_candidate() {
     // When the selection isn't a learning candidate, Ctrl+Backspace (like
     // Ctrl+Delete) is consumed so it can't leak to the app mid-conversion,

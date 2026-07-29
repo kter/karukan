@@ -13,12 +13,16 @@ const XKB_KEY_RETURN: u32 = 0xff0d;
 const XKB_KEY_ESCAPE: u32 = 0xff1b;
 const XKB_KEY_BACKSPACE: u32 = 0xff08;
 const XKB_KEY_SPACE: u32 = 0x20;
+const XKB_KEY_PERIOD: u32 = 0x2e;
 const XKB_KEY_TAB: u32 = 0xff09;
 const XKB_KEY_ISO_LEFT_TAB: u32 = 0xfe20;
+const XKB_KEY_LEFT: u32 = 0xff51;
 const XKB_KEY_SHIFT_L: u32 = 0xffe1;
 const XKB_KEY_LOWER_L: u32 = 0x6c;
 const SHIFT_MASK: u32 = karukan_im::core::keycode::KeyModifiers::SHIFT_MASK;
 const CONTROL_MASK: u32 = karukan_im::core::keycode::KeyModifiers::CONTROL_MASK;
+const PREEDIT_ATTR_UNDERLINE: i32 = 0;
+const PREEDIT_ATTR_HIGHLIGHT: i32 = 2;
 
 /// Send Ctrl+Shift+L to disable live conversion. Tests that exercise the
 /// manual hiragana flow rely on the preedit staying as hiragana, so they
@@ -69,6 +73,14 @@ impl TestEngine {
     /// Get the preedit length in bytes.
     fn preedit_len(&self) -> u32 {
         karukan_engine_get_preedit_len(self.0)
+    }
+
+    fn preedit_attr(&self, index: u32) -> (u32, u32, i32) {
+        (
+            karukan_engine_get_preedit_attr_start(self.0, index),
+            karukan_engine_get_preedit_attr_end(self.0, index),
+            karukan_engine_get_preedit_attr_style(self.0, index),
+        )
     }
 
     /// Get the commit text as a &str.
@@ -123,6 +135,10 @@ fn test_null_engine_safety() {
     assert_eq!(karukan_engine_has_preedit(ptr::null()), 0);
     assert!(karukan_engine_get_preedit(ptr::null()).is_null());
     assert_eq!(karukan_engine_get_preedit_len(ptr::null()), 0);
+    assert_eq!(karukan_engine_get_preedit_attr_count(ptr::null()), 0);
+    assert_eq!(karukan_engine_get_preedit_attr_start(ptr::null(), 0), 0);
+    assert_eq!(karukan_engine_get_preedit_attr_end(ptr::null(), 0), 0);
+    assert_eq!(karukan_engine_get_preedit_attr_style(ptr::null(), 0), 0);
     assert_eq!(karukan_engine_has_commit(ptr::null()), 0);
     assert!(karukan_engine_get_commit(ptr::null()).is_null());
     assert_eq!(karukan_engine_has_candidates(ptr::null()), 0);
@@ -285,6 +301,36 @@ fn test_ffi_shift_tab_navigates_backward() {
     assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 1);
     assert!(e.press(XKB_KEY_ISO_LEFT_TAB));
     assert_eq!(karukan_engine_get_candidate_cursor(e.ptr()), 0);
+}
+
+#[test]
+fn test_ffi_shift_left_resizes_preedit_with_byte_offset_attributes() {
+    let e = TestEngine::new();
+    disable_live_conversion(&e);
+
+    e.press(XKB_KEY_PERIOD);
+    e.press(XKB_KEY_PERIOD);
+    assert!(e.press(XKB_KEY_SPACE));
+
+    assert_eq!(e.preedit(), "。。");
+    assert_eq!(karukan_engine_get_preedit_attr_count(e.ptr()), 1);
+    assert_eq!(e.preedit_attr(0), (0, 6, PREEDIT_ATTR_HIGHLIGHT));
+
+    assert!(e.press_with(XKB_KEY_LEFT, SHIFT_MASK));
+
+    assert_eq!(e.preedit(), "。。");
+    assert_eq!(karukan_engine_get_preedit_attr_count(e.ptr()), 2);
+    assert_eq!(e.preedit_attr(0), (0, 3, PREEDIT_ATTR_HIGHLIGHT));
+    assert_eq!(e.preedit_attr(1), (3, 6, PREEDIT_ATTR_UNDERLINE));
+    assert_eq!(karukan_engine_get_preedit_caret(e.ptr()), 3);
+}
+
+#[test]
+fn test_ffi_preedit_attribute_count_is_zero_without_attributes() {
+    let e = TestEngine::new();
+
+    assert_eq!(karukan_engine_get_preedit_attr_count(e.ptr()), 0);
+    assert_eq!(e.preedit_attr(0), (0, 0, PREEDIT_ATTR_UNDERLINE));
 }
 
 #[test]

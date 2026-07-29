@@ -26,6 +26,9 @@ pub enum InputState {
         preedit: Preedit,
         /// List of conversion candidates
         candidates: CandidateList,
+        /// Number of reading characters in the conversion target at the
+        /// beginning of the input buffer.
+        target_len: usize,
     },
 }
 

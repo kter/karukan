@@ -46,6 +46,7 @@ pub(crate) use ffi_ref;
 
 use karukan_im::config::Settings;
 use karukan_im::core::engine::{EngineAction, EngineConfig, InputMethodEngine};
+use karukan_im::core::preedit::AttributeType;
 
 static INIT_LOGGING: Once = Once::new();
 
@@ -66,6 +67,8 @@ fn init_logging() {
 struct PreeditCache {
     text: CString,
     caret_bytes: u32,
+    /// Preedit attributes as (start byte, end byte, style).
+    attrs: Vec<(u32, u32, i32)>,
     dirty: bool,
 }
 
@@ -147,14 +150,32 @@ impl KarukanEngine {
         for action in actions {
             match action {
                 EngineAction::UpdatePreedit(preedit) => {
-                    let caret_chars = preedit.caret();
-                    let caret_bytes = preedit
+                    let mut char_to_byte: Vec<u32> = preedit
                         .text()
                         .char_indices()
-                        .nth(caret_chars)
-                        .map(|(i, _)| i)
-                        .unwrap_or(preedit.text().len());
-                    self.preedit.caret_bytes = caret_bytes as u32;
+                        .map(|(byte, _)| byte as u32)
+                        .collect();
+                    char_to_byte.push(preedit.text().len() as u32);
+                    let last_byte = *char_to_byte.last().unwrap_or(&0);
+                    self.preedit.caret_bytes = char_to_byte
+                        .get(preedit.caret())
+                        .copied()
+                        .unwrap_or(last_byte);
+                    self.preedit.attrs = preedit
+                        .attributes()
+                        .iter()
+                        .map(|attr| {
+                            let start = char_to_byte.get(attr.start).copied().unwrap_or(last_byte);
+                            let end = char_to_byte.get(attr.end).copied().unwrap_or(last_byte);
+                            let style = match attr.attr_type {
+                                AttributeType::Underline => 0,
+                                AttributeType::UnderlineDouble => 1,
+                                AttributeType::Highlight => 2,
+                                AttributeType::Reverse => 3,
+                            };
+                            (start, end, style)
+                        })
+                        .collect();
                     self.preedit.text = CString::new(preedit.text()).unwrap_or_default();
                     self.preedit.dirty = true;
                 }

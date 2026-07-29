@@ -214,9 +214,16 @@ impl InputMethodEngine {
             .filter(|c| c.is_deletable())
             .map(|_| format!(" ({})", LEARNING_DELETE_HINT))
             .unwrap_or_default();
+        let total_len = self.input_buf.text.chars().count();
+        let target_info = match self.state {
+            InputState::Conversion { target_len, .. } if target_len < total_len => {
+                format!(" {}/{}", target_len, total_len)
+            }
+            _ => String::new(),
+        };
         format!(
-            "[変換]{} {}{} | {} {} | {}{}{}",
-            page_info, reading, ctx, timing, tokens, model, source_label, delete_hint
+            "[変換]{}{} {}{} | {} {} | {}{}{}",
+            page_info, target_info, reading, ctx, timing, tokens, model, source_label, delete_hint
         )
     }
 

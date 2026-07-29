@@ -17,6 +17,13 @@ extern "C" {
 /* Opaque handle to a Karukan engine instance */
 typedef struct KarukanEngine KarukanEngine;
 
+typedef enum {
+    KARUKAN_PREEDIT_ATTR_UNDERLINE = 0,
+    KARUKAN_PREEDIT_ATTR_UNDERLINE_DOUBLE = 1,
+    KARUKAN_PREEDIT_ATTR_HIGHLIGHT = 2,
+    KARUKAN_PREEDIT_ATTR_REVERSE = 3,
+} KarukanPreeditAttrStyle;
+
 /*
  * Create a new Karukan engine instance.
  * Returns a pointer to the engine, or NULL on failure.
@@ -103,6 +110,23 @@ uint32_t karukan_engine_get_preedit_len(const KarukanEngine* engine);
  * This indicates where the cursor should be displayed within the preedit text.
  */
 uint32_t karukan_engine_get_preedit_caret(const KarukanEngine* engine);
+
+/*
+ * Get preedit attributes. Start/end positions are UTF-8 byte offsets.
+ */
+uint32_t karukan_engine_get_preedit_attr_count(const KarukanEngine* engine);
+uint32_t karukan_engine_get_preedit_attr_start(
+    const KarukanEngine* engine,
+    uint32_t index
+);
+uint32_t karukan_engine_get_preedit_attr_end(
+    const KarukanEngine* engine,
+    uint32_t index
+);
+int karukan_engine_get_preedit_attr_style(
+    const KarukanEngine* engine,
+    uint32_t index
+);
 
 /* --- Commit text --- */
 

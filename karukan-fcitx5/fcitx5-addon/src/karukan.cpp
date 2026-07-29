@@ -4,6 +4,8 @@
 
 #include "karukan.h"
 
+#include <algorithm>
+
 #include <fcitx-utils/i18n.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/utf8.h>
@@ -201,7 +203,40 @@ void KarukanState::updateUI() {
 
         Text preedit;
         if (preeditText && preeditLen > 0) {
-            preedit.append(std::string(preeditText, preeditLen), TextFormatFlag::Underline);
+            uint32_t attrCount = karukan_engine_get_preedit_attr_count(rustEngine_);
+            if (attrCount == 0) {
+                preedit.append(
+                    std::string(preeditText, preeditLen), TextFormatFlag::Underline);
+            } else {
+                uint32_t appended = 0;
+                for (uint32_t i = 0; i < attrCount; ++i) {
+                    uint32_t start = std::min(
+                        karukan_engine_get_preedit_attr_start(rustEngine_, i), preeditLen);
+                    uint32_t end = std::min(
+                        karukan_engine_get_preedit_attr_end(rustEngine_, i), preeditLen);
+                    if (start > appended) {
+                        preedit.append(
+                            std::string(preeditText + appended, start - appended),
+                            TextFormatFlag::Underline);
+                    }
+                    start = std::max(start, appended);
+                    if (end > start) {
+                        int style = karukan_engine_get_preedit_attr_style(rustEngine_, i);
+                        auto flag =
+                            style == KARUKAN_PREEDIT_ATTR_HIGHLIGHT ||
+                                    style == KARUKAN_PREEDIT_ATTR_UNDERLINE_DOUBLE
+                                ? TextFormatFlag::HighLight
+                                : TextFormatFlag::Underline;
+                        preedit.append(std::string(preeditText + start, end - start), flag);
+                        appended = end;
+                    }
+                }
+                if (appended < preeditLen) {
+                    preedit.append(
+                        std::string(preeditText + appended, preeditLen - appended),
+                        TextFormatFlag::Underline);
+                }
+            }
             preedit.setCursor(static_cast<int>(preeditCaret));
         }
 
