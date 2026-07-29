@@ -24,6 +24,23 @@ fn width_annotation(text: &str) -> Option<&'static str> {
     }
 }
 
+/// Drop candidates whose reading extends past the conversion target: their
+/// surface would otherwise be concatenated with the unconverted remainder.
+fn retain_target_scoped_candidates(
+    candidates: &mut Vec<AnnotatedCandidate>,
+    reading: &str,
+    has_remainder: bool,
+) {
+    if has_remainder {
+        candidates.retain(|candidate| {
+            candidate
+                .reading
+                .as_deref()
+                .is_none_or(|candidate_reading| candidate_reading == reading)
+        });
+    }
+}
+
 /// Helper for building a deduplicated list of conversion candidates.
 ///
 /// Two push paths exist: [`push`] dedups by text (skips duplicates), and
@@ -663,8 +680,9 @@ impl InputMethodEngine {
         }
 
         let (reading, _) = self.split_target(resized);
-        let candidates =
+        let mut candidates =
             self.build_conversion_candidates(&reading, self.config.num_candidates, false);
+        retain_target_scoped_candidates(&mut candidates, &reading, resized < total_len);
         if candidates.is_empty() {
             return EngineResult::consumed();
         }
@@ -841,8 +859,13 @@ impl InputMethodEngine {
         }
         debug!("deleted learning entry: {} -> {}", reading, surface);
 
-        let candidates =
+        let mut candidates =
             self.build_conversion_candidates(&reading, self.config.num_candidates, false);
+        retain_target_scoped_candidates(
+            &mut candidates,
+            &reading,
+            target_len < self.input_buf.text.chars().count(),
+        );
         if candidates.is_empty() {
             return self.cancel_conversion();
         }

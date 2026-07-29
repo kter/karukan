@@ -336,6 +336,124 @@ fn ctrl_backspace_after_resize_deletes_by_target_reading() {
 }
 
 #[test]
+fn resize_excludes_learning_predictions_beyond_target() {
+    let mut engine = engine_with_learned("あい", "愛");
+    engine
+        .learning
+        .as_mut()
+        .unwrap()
+        .record("あいうえお", "愛上尾");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(
+        engine
+            .state()
+            .candidates()
+            .unwrap()
+            .candidates()
+            .iter()
+            .any(|candidate| candidate.text == "愛上尾"),
+        "the full-reading conversion should include the longer prediction"
+    );
+
+    let result = engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    assert!(result.consumed);
+    assert!(matches!(
+        engine.state(),
+        InputState::Conversion { target_len: 1, .. }
+    ));
+    let candidates = engine.state().candidates().unwrap();
+    assert!(
+        !candidates
+            .candidates()
+            .iter()
+            .any(|candidate| candidate.text == "愛上尾"),
+        "a prediction extending beyond the resized target must be excluded"
+    );
+    assert!(
+        candidates
+            .candidates()
+            .iter()
+            .all(|candidate| candidate.reading.as_deref() == Some("あ")),
+        "every remaining candidate must correspond to the target reading"
+    );
+
+    let selected_text = candidates.selected_text().unwrap();
+    let selected_len = selected_text.chars().count();
+    let preedit = engine.preedit().unwrap();
+    assert_eq!(preedit.text(), format!("{selected_text}い"));
+    assert_eq!(preedit.attributes().len(), 2);
+    assert_eq!(preedit.attributes()[0].start, 0);
+    assert_eq!(preedit.attributes()[0].end, selected_len);
+    assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
+    assert_eq!(preedit.attributes()[1].start, selected_len);
+    assert_eq!(preedit.attributes()[1].end, selected_len + 1);
+    assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
+}
+
+#[test]
+fn history_deletion_rebuild_keeps_predictions_scoped_to_target() {
+    let mut engine = engine_with_learned("あ", "亜");
+    engine
+        .learning
+        .as_mut()
+        .unwrap()
+        .record("あいうえお", "愛上尾");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    let selected = engine.state().candidates().unwrap().selected().unwrap();
+    assert_eq!(selected.text, "亜");
+    assert!(selected.is_deletable());
+
+    let result = engine.process_key(&press_ctrl(Keysym::BACKSPACE));
+
+    assert!(result.consumed);
+    assert!(
+        !engine
+            .learning
+            .as_ref()
+            .unwrap()
+            .lookup("あいうえお")
+            .is_empty(),
+        "the longer learning entry should remain in history"
+    );
+    let candidates = engine.state().candidates().unwrap();
+    assert!(
+        !candidates
+            .candidates()
+            .iter()
+            .any(|candidate| candidate.text == "愛上尾"),
+        "history deletion must not reintroduce a prediction beyond the target"
+    );
+    assert!(
+        candidates
+            .candidates()
+            .iter()
+            .all(|candidate| candidate.reading.as_deref() == Some("あ")),
+        "rebuilt candidates must remain scoped to the target reading"
+    );
+
+    let selected_text = candidates.selected_text().unwrap();
+    let selected_len = selected_text.chars().count();
+    let preedit = engine.preedit().unwrap();
+    assert_eq!(preedit.text(), format!("{selected_text}い"));
+    assert_eq!(preedit.attributes().len(), 2);
+    assert_eq!(preedit.attributes()[0].start, 0);
+    assert_eq!(preedit.attributes()[0].end, selected_len);
+    assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
+    assert_eq!(preedit.attributes()[1].start, selected_len);
+    assert_eq!(preedit.attributes()[1].end, selected_len + 1);
+    assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
+}
+
+#[test]
 fn ctrl_backspace_does_nothing_for_non_learning_candidate() {
     // When the selection isn't a learning candidate, Ctrl+Backspace (like
     // Ctrl+Delete) is consumed so it can't leak to the app mid-conversion,
