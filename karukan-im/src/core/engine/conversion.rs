@@ -24,14 +24,16 @@ fn width_annotation(text: &str) -> Option<&'static str> {
     }
 }
 
-/// Drop candidates whose reading extends past a non-final conversion segment:
-/// their surface would otherwise overlap the following segment.
+/// Drop predictive candidates whose reading extends past the segment reading.
+/// Callers enable this after the user has split conversion into multiple
+/// segments, including for the final segment, so completed input is never
+/// expanded by a prefix prediction.
 fn retain_target_scoped_candidates(
     candidates: &mut Vec<AnnotatedCandidate>,
     reading: &str,
-    is_non_final: bool,
+    drop_predictive_candidates: bool,
 ) {
-    if is_non_final {
+    if drop_predictive_candidates {
         candidates.retain(|candidate| {
             candidate
                 .reading
@@ -306,15 +308,15 @@ impl InputMethodEngine {
     }
 
     /// Rebuild one segment's candidates with the surfaces to its left as model
-    /// context. Non-final segments exclude predictive candidates that would
-    /// overlap the following segment.
+    /// context. Once conversion has multiple segments, every segment excludes
+    /// predictive candidates, including the final segment.
     fn reconvert_segment(&mut self, index: usize) {
-        let (reading, is_non_final) = match &self.state {
+        let (reading, drop_predictive_candidates) = match &self.state {
             InputState::Conversion { segments, .. } => {
                 let Some(segment) = segments.get(index) else {
                     return;
                 };
-                (segment.reading.clone(), index + 1 < segments.len())
+                (segment.reading.clone(), segments.len() > 1)
             }
             _ => return,
         };
@@ -325,7 +327,7 @@ impl InputMethodEngine {
             self.config.num_candidates,
             false,
         );
-        retain_target_scoped_candidates(&mut candidates, &reading, is_non_final);
+        retain_target_scoped_candidates(&mut candidates, &reading, drop_predictive_candidates);
         if candidates.is_empty() {
             candidates.push(AnnotatedCandidate::new(
                 reading.clone(),
@@ -972,10 +974,10 @@ impl InputMethodEngine {
         let Some(reading) = self.focused_reading().map(str::to_string) else {
             return EngineResult::consumed();
         };
-        let (focus, is_non_final) = match &self.state {
+        let (focus, drop_predictive_candidates) = match &self.state {
             InputState::Conversion {
                 segments, focus, ..
-            } => (*focus, *focus + 1 < segments.len()),
+            } => (*focus, segments.len() > 1),
             _ => return EngineResult::consumed(),
         };
         let removed = self
@@ -994,7 +996,7 @@ impl InputMethodEngine {
             self.config.num_candidates,
             false,
         );
-        retain_target_scoped_candidates(&mut candidates, &reading, is_non_final);
+        retain_target_scoped_candidates(&mut candidates, &reading, drop_predictive_candidates);
         if candidates.is_empty() {
             return self.cancel_conversion();
         }
