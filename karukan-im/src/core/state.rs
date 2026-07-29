@@ -3,6 +3,7 @@
 //! Defines the states of the IME and transitions between them.
 
 use super::candidate::CandidateList;
+use super::engine::Segment;
 use super::preedit::Preedit;
 
 /// The current state of the IME
@@ -24,11 +25,11 @@ pub enum InputState {
     Conversion {
         /// The preedit string showing conversion result
         preedit: Preedit,
-        /// List of conversion candidates
-        candidates: CandidateList,
-        /// Number of reading characters in the conversion target at the
-        /// beginning of the input buffer.
-        target_len: usize,
+        /// Uncommitted conversion segments. The concatenation of every
+        /// segment's reading always equals the engine input buffer text.
+        segments: Vec<Segment>,
+        /// Index of the focused segment (always in bounds for `segments`).
+        focus: usize,
     },
 }
 
@@ -59,7 +60,9 @@ impl InputState {
     /// Get candidates in conversion state
     pub fn candidates(&self) -> Option<&CandidateList> {
         match self {
-            Self::Conversion { candidates, .. } => Some(candidates),
+            Self::Conversion {
+                segments, focus, ..
+            } => segments.get(*focus).map(|segment| &segment.candidates),
             _ => None,
         }
     }
@@ -67,7 +70,11 @@ impl InputState {
     /// Get mutable reference to candidates
     pub fn candidates_mut(&mut self) -> Option<&mut CandidateList> {
         match self {
-            Self::Conversion { candidates, .. } => Some(candidates),
+            Self::Conversion {
+                segments, focus, ..
+            } => segments
+                .get_mut(*focus)
+                .map(|segment| &mut segment.candidates),
             _ => None,
         }
     }

@@ -27,7 +27,7 @@ fn build_candidates_includes_learning_when_not_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", 9, false)
+        .build_conversion_candidates("あい", "", 9, false)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -44,7 +44,7 @@ fn build_candidates_omits_learning_when_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", 9, true)
+        .build_conversion_candidates("あい", "", 9, true)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -331,7 +331,8 @@ fn ctrl_backspace_after_resize_deletes_by_target_reading() {
     );
     assert!(matches!(
         engine.state(),
-        InputState::Conversion { target_len: 1, .. }
+        InputState::Conversion { segments, focus: 0, .. }
+            if segments.len() == 2 && segments[0].reading == "あ"
     ));
 }
 
@@ -363,7 +364,8 @@ fn resize_excludes_learning_predictions_beyond_target() {
     assert!(result.consumed);
     assert!(matches!(
         engine.state(),
-        InputState::Conversion { target_len: 1, .. }
+        InputState::Conversion { segments, focus: 0, .. }
+            if segments.len() == 2 && segments[0].reading == "あ"
     ));
     let candidates = engine.state().candidates().unwrap();
     assert!(

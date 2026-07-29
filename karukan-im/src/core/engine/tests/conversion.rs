@@ -9,6 +9,19 @@ fn start_ai_conversion(engine: &mut InputMethodEngine) {
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
 }
 
+fn assert_segment_reading_invariant(engine: &InputMethodEngine) {
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        panic!("expected Conversion state");
+    };
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.reading.as_str())
+            .collect::<String>(),
+        engine.input_buf.text
+    );
+}
+
 #[test]
 fn test_conversion_char_commits_and_continues() {
     let mut engine = InputMethodEngine::new();
@@ -104,49 +117,69 @@ fn test_tab_navigation_in_conversion() {
 }
 
 #[test]
-fn shift_arrows_resize_conversion_target_with_clamped_boundaries() {
+fn shift_arrows_create_and_delete_segments_at_boundaries() {
     let mut engine = InputMethodEngine::new();
     start_ai_conversion(&mut engine);
 
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 2, .. }
-    ));
+    let InputState::Conversion {
+        segments, focus, ..
+    } = engine.state()
+    else {
+        unreachable!()
+    };
+    assert_eq!(segments.len(), 1);
+    assert_eq!(*focus, 0);
+    assert_eq!(segments[0].reading, "あい");
+    assert_segment_reading_invariant(&engine);
 
     let result = engine.process_key(&press_shift_key(Keysym::RIGHT));
     assert!(result.consumed);
     assert!(result.actions.is_empty());
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 2, .. }
-    ));
 
     let result = engine.process_key(&press_shift_key(Keysym::LEFT));
     assert!(result.consumed);
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 1, .. }
-    ));
-    assert_eq!(engine.input_buf.text, "あい");
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        unreachable!()
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].reading, "あ");
+    assert_eq!(segments[1].reading, "い");
+    assert_segment_reading_invariant(&engine);
+
+    assert!(engine.process_key(&press_key(Keysym::RIGHT)).consumed);
+    let result = engine.process_key(&press_shift_key(Keysym::RIGHT));
+    assert!(result.consumed);
+    assert!(result.actions.is_empty());
+    let result = engine.process_key(&press_shift_key(Keysym::LEFT));
+    assert!(result.consumed);
+    assert!(result.actions.is_empty());
+    assert_segment_reading_invariant(&engine);
+    assert!(engine.process_key(&press_key(Keysym::LEFT)).consumed);
 
     let result = engine.process_key(&press_shift_key(Keysym::LEFT));
     assert!(result.consumed);
     assert!(result.actions.is_empty());
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 1, .. }
-    ));
+    assert_eq!(
+        match engine.state() {
+            InputState::Conversion { segments, .. } => segments.len(),
+            _ => 0,
+        },
+        2,
+        "a one-character focused segment cannot shrink"
+    );
 
     let result = engine.process_key(&press_shift_key(Keysym::RIGHT));
     assert!(result.consumed);
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 2, .. }
-    ));
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        unreachable!()
+    };
+    assert_eq!(segments.len(), 1);
+    assert_eq!(segments[0].reading, "あい");
+    assert_segment_reading_invariant(&engine);
 }
 
 #[test]
-fn conversion_preedit_attributes_distinguish_target_and_remainder() {
+fn conversion_preedit_attributes_track_all_segments_and_focus() {
     let mut engine = InputMethodEngine::new();
     start_ai_conversion(&mut engine);
 
@@ -157,7 +190,6 @@ fn conversion_preedit_attributes_distinguish_target_and_remainder() {
     assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
 
     engine.process_key(&press_shift_key(Keysym::LEFT));
-
     let preedit = engine.preedit().unwrap();
     let attributes = preedit.attributes();
     assert_eq!(attributes.len(), 2);
@@ -167,103 +199,151 @@ fn conversion_preedit_attributes_distinguish_target_and_remainder() {
     assert_eq!(attributes[1].start, preedit.caret());
     assert_eq!(attributes[1].end, preedit.text().chars().count());
     assert_eq!(attributes[1].attr_type, AttributeType::Underline);
-    assert!(preedit.text().ends_with('い'));
+
+    engine.process_key(&press_key(Keysym::RIGHT));
+    let preedit = engine.preedit().unwrap();
+    let attributes = preedit.attributes();
+    assert_eq!(attributes.len(), 2);
+    assert_eq!(attributes[0].attr_type, AttributeType::Underline);
+    assert_eq!(attributes[1].attr_type, AttributeType::Highlight);
+    assert_eq!(preedit.caret(), preedit.text().chars().count());
 }
 
 #[test]
-fn partial_enter_commits_target_then_converts_remainder() {
+fn preedit_has_one_attribute_per_segment_for_three_segments() {
     let mut engine = InputMethodEngine::new();
+    for ch in ['a', 'i', 'u', 'e'] {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+    engine.process_key(&press_key(Keysym::RIGHT));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    let InputState::Conversion {
+        segments, focus, ..
+    } = engine.state()
+    else {
+        unreachable!()
+    };
+    assert_eq!(segments.len(), 3);
+    assert_eq!(*focus, 1);
+    let preedit = engine.preedit().unwrap();
+    assert_eq!(preedit.attributes().len(), 3);
+    assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Underline);
+    assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Highlight);
+    assert_eq!(preedit.attributes()[2].attr_type, AttributeType::Underline);
+    assert_eq!(preedit.attributes()[0].start, 0);
+    assert_eq!(preedit.attributes()[0].end, preedit.attributes()[1].start);
+    assert_eq!(preedit.attributes()[1].end, preedit.attributes()[2].start);
+    assert_eq!(preedit.attributes()[2].end, preedit.text().chars().count());
+    assert_eq!(preedit.caret(), preedit.attributes()[1].end);
+    assert_segment_reading_invariant(&engine);
+}
+
+#[test]
+fn enter_commits_all_segments_and_records_learning_per_segment() {
+    let mut engine = InputMethodEngine::new();
+    engine.learning = Some(LearningCache::new(LearningConfig::default()));
     engine.set_surrounding_context("前", "");
     start_ai_conversion(&mut engine);
     engine.process_key(&press_shift_key(Keysym::LEFT));
-    let first_surface = engine
-        .state()
-        .candidates()
-        .unwrap()
-        .selected_text()
-        .unwrap()
-        .to_string();
+    let (expected, selections) = engine.selected_conversion_info().unwrap();
 
     let result = engine.process_key(&press_key(Keysym::RETURN));
+
     assert!(result.consumed);
-    assert!(matches!(
-        result.actions.first(),
-        Some(EngineAction::Commit(text)) if text == &first_surface
-    ));
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 1, .. }
-    ));
-    assert_eq!(engine.input_buf.text, "い");
-    assert_eq!(
-        engine.surrounding_context.as_ref().unwrap().left.as_deref(),
-        Some(format!("前{first_surface}").as_str())
-    );
-
-    let result = engine.process_key(&press_key(Keysym::RETURN));
     assert!(
         result
             .actions
             .iter()
-            .any(|action| matches!(action, EngineAction::Commit(_)))
+            .any(|action| matches!(action, EngineAction::Commit(text) if text == &expected))
     );
     assert!(matches!(engine.state(), InputState::Empty));
-}
-
-#[test]
-fn partial_enter_records_learning_under_target_reading() {
-    let mut engine = InputMethodEngine::new();
-    engine.learning = Some(LearningCache::new(LearningConfig::default()));
-    start_ai_conversion(&mut engine);
-    engine.process_key(&press_shift_key(Keysym::LEFT));
-    let surface = engine
-        .state()
-        .candidates()
-        .unwrap()
-        .selected_text()
-        .unwrap()
-        .to_string();
-
-    engine.process_key(&press_key(Keysym::RETURN));
+    assert!(engine.input_buf.text.is_empty());
+    assert_eq!(
+        engine.surrounding_context.as_ref().unwrap().left.as_deref(),
+        Some(format!("前{expected}").as_str())
+    );
 
     let cache = engine.learning.as_ref().unwrap();
-    assert!(cache.lookup("あ").iter().any(|(text, _)| text == &surface));
+    for (reading, surface) in selections {
+        assert!(
+            cache
+                .lookup(&reading)
+                .iter()
+                .any(|(text, _)| text == &surface)
+        );
+    }
     assert!(cache.lookup("あい").is_empty());
 }
 
 #[test]
-fn digit_selection_uses_progressive_commit_path() {
+fn committed_surrounding_context_is_bounded_and_keeps_latest_text() {
     let mut engine = InputMethodEngine::new();
-    engine.learning = Some(LearningCache::new(LearningConfig::default()));
+    engine.config.display_context_len = 5;
+    engine.config.max_api_context_len = 8;
+    let context_limit = engine
+        .config
+        .display_context_len
+        .max(engine.config.max_api_context_len);
+    let committed = [
+        "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四",
+        "十五", "十六", "十七", "十八", "十九", "二十",
+    ];
+
+    for text in committed {
+        engine.finish_conversion(text, &[("よみ".to_string(), text.to_string())]);
+    }
+
+    let left = engine
+        .surrounding_context
+        .as_ref()
+        .and_then(|context| context.left.as_deref())
+        .unwrap();
+    assert!(left.chars().count() <= context_limit);
+    assert!(left.ends_with(committed.last().unwrap()));
+}
+
+#[test]
+fn digit_selection_moves_focus_without_committing() {
+    let mut engine = InputMethodEngine::new();
     start_ai_conversion(&mut engine);
     engine.process_key(&press_shift_key(Keysym::LEFT));
-    let first_surface = engine
-        .state()
-        .candidates()
-        .unwrap()
-        .selected_text()
-        .unwrap()
-        .to_string();
 
     let result = engine.process_key(&press('1'));
 
-    assert!(matches!(
-        result.actions.first(),
-        Some(EngineAction::Commit(text)) if text == &first_surface
-    ));
+    assert!(result.consumed);
+    assert!(
+        !result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::Commit(_)))
+    );
+    let InputState::Conversion {
+        focus, segments, ..
+    } = engine.state()
+    else {
+        panic!("digit selection must keep Conversion state");
+    };
+    assert_eq!(*focus, 1);
+    assert_eq!(segments.len(), 2);
+    assert_eq!(engine.input_buf.text, "あい");
+    assert_segment_reading_invariant(&engine);
+
+    let result = engine.process_key(&press('1'));
+    assert!(result.consumed);
+    assert!(
+        !result
+            .actions
+            .iter()
+            .any(|action| matches!(action, EngineAction::Commit(_)))
+    );
     assert!(matches!(
         engine.state(),
-        InputState::Conversion { target_len: 1, .. }
+        InputState::Conversion { focus: 1, .. }
     ));
-    assert_eq!(engine.input_buf.text, "い");
-    let cache = engine.learning.as_ref().unwrap();
-    assert!(
-        cache
-            .lookup("あ")
-            .iter()
-            .any(|(text, _)| text == &first_surface)
-    );
-    assert!(cache.lookup("あい").is_empty());
 }
 
 #[test]
@@ -281,31 +361,72 @@ fn escape_after_resize_restores_the_whole_reading() {
 }
 
 #[test]
-fn plain_arrows_remain_unconsumed_during_conversion() {
+fn plain_arrows_move_focus_and_are_consumed_at_boundaries() {
     let mut engine = InputMethodEngine::new();
     start_ai_conversion(&mut engine);
+    engine.process_key(&press_shift_key(Keysym::LEFT));
 
-    assert!(!engine.process_key(&press_key(Keysym::LEFT)).consumed);
-    assert!(!engine.process_key(&press_key(Keysym::RIGHT)).consumed);
+    let result = engine.process_key(&press_key(Keysym::LEFT));
+    assert!(result.consumed);
+    assert!(result.actions.is_empty());
     assert!(matches!(
         engine.state(),
-        InputState::Conversion { target_len: 2, .. }
+        InputState::Conversion { focus: 0, .. }
     ));
+
+    assert!(engine.process_key(&press_key(Keysym::RIGHT)).consumed);
+    assert!(matches!(
+        engine.state(),
+        InputState::Conversion { focus: 1, .. }
+    ));
+    let result = engine.process_key(&press_key(Keysym::RIGHT));
+    assert!(result.consumed);
+    assert!(result.actions.is_empty());
+    assert!(engine.process_key(&press_key(Keysym::LEFT)).consumed);
+    assert!(matches!(
+        engine.state(),
+        InputState::Conversion { focus: 0, .. }
+    ));
+    assert_segment_reading_invariant(&engine);
 }
 
 #[test]
-fn aux_target_position_only_appears_for_shortened_target() {
+fn aux_segment_position_only_appears_with_multiple_segments() {
     let mut engine = InputMethodEngine::new();
     engine.process_key(&press('a'));
     engine.process_key(&press('i'));
     let result = engine.process_key(&press_key(Keysym::SPACE));
     let full_aux = last_aux_text(&result).unwrap();
-    assert!(!full_aux.contains(" 2/2 あい"));
+    assert!(!full_aux.contains("文節"));
 
     let result = engine.process_key(&press_shift_key(Keysym::LEFT));
     let shortened_aux = last_aux_text(&result).unwrap();
     assert!(
-        shortened_aux.contains(" 1/2 "),
-        "shortened conversion aux must show target position: {shortened_aux}"
+        shortened_aux.contains(" 1/2文節 "),
+        "multi-segment conversion aux must show focus position: {shortened_aux}"
     );
+}
+
+#[test]
+fn focus_out_commit_preserves_all_segments() {
+    let mut engine = InputMethodEngine::new();
+    start_ai_conversion(&mut engine);
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+    let expected = engine.selected_conversion_info().unwrap().0;
+
+    assert_eq!(engine.commit(), expected);
+    assert!(matches!(engine.state(), InputState::Empty));
+    assert!(engine.input_buf.text.is_empty());
+}
+
+#[test]
+fn second_segment_context_contains_first_selected_surface() {
+    let mut engine = InputMethodEngine::new();
+    engine.set_surrounding_context("前", "");
+    start_ai_conversion(&mut engine);
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+    engine.state.candidates_mut().unwrap().move_next();
+    let first_surface = engine.state.candidates().unwrap().selected_text().unwrap();
+
+    assert_eq!(engine.segment_lctx(1), format!("前{first_surface}"));
 }

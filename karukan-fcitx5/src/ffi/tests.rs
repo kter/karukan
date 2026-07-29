@@ -17,6 +17,7 @@ const XKB_KEY_PERIOD: u32 = 0x2e;
 const XKB_KEY_TAB: u32 = 0xff09;
 const XKB_KEY_ISO_LEFT_TAB: u32 = 0xfe20;
 const XKB_KEY_LEFT: u32 = 0xff51;
+const XKB_KEY_RIGHT: u32 = 0xff53;
 const XKB_KEY_SHIFT_L: u32 = 0xffe1;
 const XKB_KEY_LOWER_L: u32 = 0x6c;
 const SHIFT_MASK: u32 = karukan_im::core::keycode::KeyModifiers::SHIFT_MASK;
@@ -323,6 +324,29 @@ fn test_ffi_shift_left_resizes_preedit_with_byte_offset_attributes() {
     assert_eq!(e.preedit_attr(0), (0, 3, PREEDIT_ATTR_HIGHLIGHT));
     assert_eq!(e.preedit_attr(1), (3, 6, PREEDIT_ATTR_UNDERLINE));
     assert_eq!(karukan_engine_get_preedit_caret(e.ptr()), 3);
+}
+
+#[test]
+fn test_ffi_right_moves_segment_focus_with_byte_offset_attributes() {
+    let e = TestEngine::new();
+    disable_live_conversion(&e);
+
+    e.press(XKB_KEY_PERIOD);
+    e.press(XKB_KEY_PERIOD);
+    assert!(e.press(XKB_KEY_SPACE));
+    assert!(e.press_with(XKB_KEY_LEFT, SHIFT_MASK));
+
+    assert_eq!(e.preedit(), "。。");
+    assert_eq!(e.preedit_attr(0), (0, 3, PREEDIT_ATTR_HIGHLIGHT));
+    assert_eq!(e.preedit_attr(1), (3, 6, PREEDIT_ATTR_UNDERLINE));
+
+    assert!(e.press(XKB_KEY_RIGHT));
+
+    assert_eq!(e.preedit(), "。。");
+    assert_eq!(karukan_engine_get_preedit_attr_count(e.ptr()), 2);
+    assert_eq!(e.preedit_attr(0), (0, 3, PREEDIT_ATTR_UNDERLINE));
+    assert_eq!(e.preedit_attr(1), (3, 6, PREEDIT_ATTR_HIGHLIGHT));
+    assert_eq!(karukan_engine_get_preedit_caret(e.ptr()), 6);
 }
 
 #[test]
