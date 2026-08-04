@@ -22,12 +22,39 @@ fn engine_with_learned(reading: &str, surface: &str) -> InputMethodEngine {
     engine
 }
 
+fn selected_segment_surfaces(segments: &[Segment]) -> String {
+    segments
+        .iter()
+        .map(|segment| {
+            segment
+                .candidates
+                .selected_text()
+                .unwrap_or(&segment.reading)
+        })
+        .collect()
+}
+
+fn assert_segment_candidates_are_exact(segments: &[Segment]) {
+    for segment in segments {
+        assert!(
+            segment.candidates.candidates().iter().all(|candidate| {
+                candidate
+                    .reading
+                    .as_deref()
+                    .is_none_or(|reading| reading == segment.reading)
+            }),
+            "segment {:?} must not contain predictive candidates",
+            segment.reading
+        );
+    }
+}
+
 #[test]
 fn build_candidates_includes_learning_when_not_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", "あい", "", 9, false)
+        .build_conversion_candidates("あい", "あい", "", "", 9, false)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -44,7 +71,7 @@ fn build_candidates_omits_learning_when_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", "あい", "", 9, true)
+        .build_conversion_candidates("あい", "あい", "", "", 9, true)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -331,7 +358,8 @@ fn ctrl_backspace_after_resize_deletes_by_target_reading() {
     );
     assert!(matches!(
         engine.state(),
-        InputState::Conversion { target_len: 1, .. }
+        InputState::Conversion { segments, focus: 0, .. }
+            if segments.len() == 2 && segments[0].reading == "あ"
     ));
 }
 
@@ -361,11 +389,16 @@ fn resize_excludes_learning_predictions_beyond_target() {
     let result = engine.process_key(&press_shift_key(Keysym::LEFT));
 
     assert!(result.consumed);
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { target_len: 1, .. }
-    ));
-    let candidates = engine.state().candidates().unwrap();
+    let InputState::Conversion {
+        segments, focus, ..
+    } = engine.state()
+    else {
+        panic!("expected Conversion state");
+    };
+    assert_eq!(*focus, 0);
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].reading, "あ");
+    let candidates = &segments[0].candidates;
     assert!(
         !candidates
             .candidates()
@@ -380,18 +413,73 @@ fn resize_excludes_learning_predictions_beyond_target() {
             .all(|candidate| candidate.reading.as_deref() == Some("あ")),
         "every remaining candidate must correspond to the target reading"
     );
+    assert_segment_candidates_are_exact(segments);
 
     let selected_text = candidates.selected_text().unwrap();
     let selected_len = selected_text.chars().count();
+    let final_selected_len = segments[1]
+        .candidates
+        .selected_text()
+        .unwrap_or(&segments[1].reading)
+        .chars()
+        .count();
     let preedit = engine.preedit().unwrap();
-    assert_eq!(preedit.text(), format!("{selected_text}い"));
+    assert_eq!(preedit.text(), selected_segment_surfaces(segments));
     assert_eq!(preedit.attributes().len(), 2);
     assert_eq!(preedit.attributes()[0].start, 0);
     assert_eq!(preedit.attributes()[0].end, selected_len);
     assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
     assert_eq!(preedit.attributes()[1].start, selected_len);
-    assert_eq!(preedit.attributes()[1].end, selected_len + 1);
+    assert_eq!(
+        preedit.attributes()[1].end,
+        selected_len + final_selected_len
+    );
     assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
+}
+
+#[test]
+fn segmented_final_segment_excludes_learning_prediction() {
+    let mut engine = engine_with_learned("すみません", "すみません、");
+
+    for ch in ['a', 'i', 's', 'u'] {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        panic!("expected Conversion state");
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].reading, "あい");
+    assert_eq!(segments[1].reading, "す");
+    assert_segment_candidates_are_exact(segments);
+    assert_eq!(
+        engine.preedit().unwrap().text(),
+        selected_segment_surfaces(segments)
+    );
+}
+
+#[test]
+fn single_segment_conversion_keeps_learning_prediction() {
+    let mut engine = engine_with_learned("あいうえお", "愛上尾");
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    engine.process_key(&press_key(Keysym::SPACE));
+
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        panic!("expected Conversion state");
+    };
+    assert_eq!(segments.len(), 1);
+    assert!(
+        segments[0]
+            .candidates
+            .candidates()
+            .iter()
+            .any(|candidate| candidate.text == "愛上尾"),
+        "whole-reading conversion must continue to include predictions"
+    );
 }
 
 #[test]
@@ -424,7 +512,10 @@ fn history_deletion_rebuild_keeps_predictions_scoped_to_target() {
             .is_empty(),
         "the longer learning entry should remain in history"
     );
-    let candidates = engine.state().candidates().unwrap();
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        panic!("expected Conversion state");
+    };
+    let candidates = &segments[0].candidates;
     assert!(
         !candidates
             .candidates()
@@ -439,17 +530,27 @@ fn history_deletion_rebuild_keeps_predictions_scoped_to_target() {
             .all(|candidate| candidate.reading.as_deref() == Some("あ")),
         "rebuilt candidates must remain scoped to the target reading"
     );
+    assert_segment_candidates_are_exact(segments);
 
     let selected_text = candidates.selected_text().unwrap();
     let selected_len = selected_text.chars().count();
+    let final_selected_len = segments[1]
+        .candidates
+        .selected_text()
+        .unwrap_or(&segments[1].reading)
+        .chars()
+        .count();
     let preedit = engine.preedit().unwrap();
-    assert_eq!(preedit.text(), format!("{selected_text}い"));
+    assert_eq!(preedit.text(), selected_segment_surfaces(segments));
     assert_eq!(preedit.attributes().len(), 2);
     assert_eq!(preedit.attributes()[0].start, 0);
     assert_eq!(preedit.attributes()[0].end, selected_len);
     assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
     assert_eq!(preedit.attributes()[1].start, selected_len);
-    assert_eq!(preedit.attributes()[1].end, selected_len + 1);
+    assert_eq!(
+        preedit.attributes()[1].end,
+        selected_len + final_selected_len
+    );
     assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
 }
 

@@ -227,10 +227,11 @@ impl InputMethodEngine {
             .filter(|c| c.is_deletable())
             .map(|_| format!(" ({})", LEARNING_DELETE_HINT))
             .unwrap_or_default();
-        let total_len = self.settled_reading_len();
-        let target_info = match self.state {
-            InputState::Conversion { target_len, .. } if target_len < total_len => {
-                format!(" {}/{}", target_len, total_len)
+        let target_info = match &self.state {
+            InputState::Conversion {
+                segments, focus, ..
+            } if segments.len() > 1 => {
+                format!(" {}/{}文節", focus + 1, segments.len())
             }
             _ => String::new(),
         };

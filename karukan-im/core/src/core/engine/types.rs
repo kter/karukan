@@ -7,6 +7,15 @@ use crate::config::settings::StrategyMode;
 use super::super::candidate::CandidateList;
 use super::super::preedit::Preedit;
 
+/// One user-adjustable conversion segment.
+#[derive(Debug, Clone)]
+pub struct Segment {
+    /// Hiragana reading covered by this segment.
+    pub reading: String,
+    /// Conversion candidates and selection for this segment.
+    pub candidates: CandidateList,
+}
+
 /// Action to be performed by the framework/UI layer
 #[derive(Debug, Clone)]
 pub enum EngineAction {
@@ -314,7 +323,7 @@ pub(in crate::core) enum ConversionStrategy {
 /// Timing and adaptive model selection metrics for conversion
 #[derive(Debug, Clone, Default)]
 pub(in crate::core) struct ConversionMetrics {
-    /// Conversion time of the current call in milliseconds (inference only);
+    /// Total conversion time of the current key event in milliseconds;
     /// reset to 0 at the start of each key/selection so it never carries
     /// over from a previous keystroke
     pub conversion_ms: u64,
@@ -325,4 +334,7 @@ pub(in crate::core) struct ConversionMetrics {
     /// Adaptive flag: set when the main model exceeded max_latency_ms
     /// Reset when a new word begins (Empty state)
     pub adaptive_use_light_model: bool,
+    /// Whether the main model participated in any conversion during the
+    /// current key event.
+    pub adaptive_main_model_used: bool,
 }

@@ -443,6 +443,7 @@ impl InputMethodEngine {
         let start = std::time::Instant::now();
         // conversion_ms reports this key only: 0 unless a conversion runs below
         self.metrics.conversion_ms = 0;
+        self.metrics.adaptive_main_model_used = false;
 
         let shift_active = key.modifiers.shift_key;
 
@@ -452,6 +453,7 @@ impl InputMethodEngine {
             InputState::Conversion { .. } => self.process_key_conversion(key),
         };
 
+        self.update_adaptive_model_flag();
         self.metrics.process_key_ms = start.elapsed().as_millis() as u64;
 
         result
@@ -480,15 +482,10 @@ impl InputMethodEngine {
                 text
             }
             InputState::Conversion { .. } => {
-                let (text, reading) = self
+                let (text, selections) = self
                     .selected_conversion_info()
                     .expect("state is Conversion");
-                // Record conversion result in learning cache
-                if let Some(reading) = &reading {
-                    self.record_learning(reading, &text);
-                }
-                self.input_buf.clear();
-                self.state = InputState::Empty;
+                self.finish_conversion(&text, &selections);
                 self.surrounding_context = None;
                 text
             }

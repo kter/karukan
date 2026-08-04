@@ -28,6 +28,7 @@ Karukan のキーバインド一覧です。共通キーバインドは Linux (f
 |------|------|
 | Space / Tab / ↓ / Ctrl+N | 次の候補 |
 | ↑ / Ctrl+P / Shift+Tab | 前の候補 |
+| ← → | 注目文節を移動 |
 | Shift+← / Shift+→ | 変換対象の範囲を縮める / 伸ばす |
 | PageDown / PageUp | 候補ページの移動 |
 | 1-9 | 候補を番号で選択・確定 |

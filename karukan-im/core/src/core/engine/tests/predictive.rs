@@ -129,7 +129,7 @@ fn conversion_list_gets_all_predictive_candidates() {
     ));
 
     let conversion: Vec<String> = engine
-        .build_conversion_candidates("わせ", "わせ", "", 1, false)
+        .build_conversion_candidates("わせ", "わせ", "", "", 1, false)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -178,4 +178,46 @@ fn conversion_with_pending_keeps_narrowed_candidates() {
         .find(|c| c.text == "早稲田")
         .unwrap();
     assert_eq!(waseda.reading.as_deref(), Some("わせだ"));
+}
+
+#[test]
+fn resizing_the_target_drops_dictionary_predictions() {
+    // Merge guard: the predictive dictionary lookup is a second source of
+    // reading-extending candidates alongside the learning cache, so it must
+    // also be scoped out once the user starts re-splitting the conversion
+    // (`retain_target_scoped_candidates`). Otherwise Shift+← would paste text
+    // the user never typed into the preedit.
+    let mut engine = InputMethodEngine::new();
+    engine.dicts.system = Some(dict_from_json(
+        r#"[
+            {"reading":"あい","candidates":[{"surface":"藍","score":1000.0}]},
+            {"reading":"あいうえ","candidates":[{"surface":"藍上絵","score":900.0}]}
+        ]"#,
+    ));
+
+    for ch in "aiu".chars() {
+        engine.process_key(&press(ch));
+    }
+    engine.process_key(&press_key(Keysym::SPACE));
+    engine.process_key(&press_shift_key(Keysym::LEFT));
+
+    let InputState::Conversion { segments, .. } = engine.state() else {
+        panic!("expected Conversion state");
+    };
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].reading, "あい");
+    assert!(
+        segments[0]
+            .candidates
+            .candidates()
+            .iter()
+            .all(|candidate| candidate.reading.as_deref() == Some("あい")),
+        "no candidate may carry a reading past the resized target: {:?}",
+        segments[0]
+            .candidates
+            .candidates()
+            .iter()
+            .map(|c| (c.text.as_str(), c.reading.as_deref()))
+            .collect::<Vec<_>>()
+    );
 }
