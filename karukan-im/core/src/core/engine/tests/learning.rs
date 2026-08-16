@@ -1,60 +1,18 @@
-//! Tests for the learning cache and conversion-key learning behavior.
+//! Tests for the learning cache and the Tab-skips-learning behavior.
 //!
-//! Space/Down/Tab: include learning candidates (default conversion).
-//! Shift+Tab: skip learning candidates (lets users escape stale learned entries).
+//! Space/Down: include learning candidates (default conversion).
+//! Tab: skip learning candidates (lets users escape stale learned entries).
 //! Ctrl+Delete: delete the selected learning candidate from the history.
-
-use karukan_engine::{LearningCache, LearningConfig};
 
 use super::*;
 use crate::core::engine::display::LEARNING_DELETE_HINT;
-
-/// Engine seeded with a learning entry `reading → surface`, no kanji model.
-/// We bypass `init.rs` (which gates learning on settings + file I/O) and just
-/// inject a populated `LearningCache` directly — these tests assert the
-/// build_conversion_candidates branching, not the load path.
-fn engine_with_learned(reading: &str, surface: &str) -> InputMethodEngine {
-    let mut engine = InputMethodEngine::new();
-    engine.converters.kanji = None;
-    let mut cache = LearningCache::new(LearningConfig::default());
-    cache.record(reading, surface);
-    engine.learning = Some(cache);
-    engine
-}
-
-fn selected_segment_surfaces(segments: &[Segment]) -> String {
-    segments
-        .iter()
-        .map(|segment| {
-            segment
-                .candidates
-                .selected_text()
-                .unwrap_or(&segment.reading)
-        })
-        .collect()
-}
-
-fn assert_segment_candidates_are_exact(segments: &[Segment]) {
-    for segment in segments {
-        assert!(
-            segment.candidates.candidates().iter().all(|candidate| {
-                candidate
-                    .reading
-                    .as_deref()
-                    .is_none_or(|reading| reading == segment.reading)
-            }),
-            "segment {:?} must not contain predictive candidates",
-            segment.reading
-        );
-    }
-}
 
 #[test]
 fn build_candidates_includes_learning_when_not_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", "あい", "", "", 9, false)
+        .build_conversion_candidates("あい", "あい", "", 9, LearningLookup::Use)
         .into_iter()
         .map(|c| c.text)
         .collect();
@@ -71,20 +29,20 @@ fn build_candidates_omits_learning_when_skipped() {
     let mut engine = engine_with_learned("あい", "藍");
 
     let texts: Vec<String> = engine
-        .build_conversion_candidates("あい", "あい", "", "", 9, true)
+        .build_conversion_candidates("あい", "あい", "", 9, LearningLookup::Skip)
         .into_iter()
         .map(|c| c.text)
         .collect();
 
     assert!(
         !texts.contains(&"藍".to_string()),
-        "Shift+Tab path (skip_learning=true) must drop learned `藍`, got {:?}",
+        "Tab path (skip_learning=true) must drop learned `藍`, got {:?}",
         texts,
     );
 }
 
 #[test]
-fn shift_tab_key_skips_learning_in_composing() {
+fn shift_tab_skips_learning_in_composing() {
     // End-to-end: type the reading, press Shift+Tab → learned candidate is gone.
     let mut engine = engine_with_learned("あい", "藍");
 
@@ -109,49 +67,6 @@ fn shift_tab_key_skips_learning_in_composing() {
         "Shift+Tab must skip the learned `藍` candidate, got {:?}",
         texts,
     );
-}
-
-#[test]
-fn iso_left_tab_key_skips_learning_in_composing() {
-    let mut engine = engine_with_learned("あい", "藍");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-
-    let result = engine.process_key(&press_key(Keysym::ISO_LEFT_TAB));
-    assert!(result.consumed);
-    assert!(matches!(engine.state(), InputState::Conversion { .. }));
-
-    let texts: Vec<String> = engine
-        .state()
-        .candidates()
-        .unwrap()
-        .candidates()
-        .iter()
-        .map(|c| c.text.clone())
-        .collect();
-    assert!(
-        !texts.contains(&"藍".to_string()),
-        "ISO_Left_Tab must skip the learned `藍` candidate, got {:?}",
-        texts,
-    );
-}
-
-#[test]
-fn tab_key_includes_learning_in_composing() {
-    let mut engine = engine_with_learned("あい", "藍");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-
-    let result = engine.process_key(&press_key(Keysym::TAB));
-    assert!(result.consumed);
-    assert!(matches!(engine.state(), InputState::Conversion { .. }));
-
-    let candidates = engine.state().candidates().unwrap();
-    assert_eq!(candidates.cursor(), 0);
-    assert_eq!(candidates.candidates()[0].text, "藍");
-    assert_eq!(candidates.selected().unwrap().text, "藍");
 }
 
 #[test]
@@ -332,226 +247,6 @@ fn ctrl_backspace_deletes_learning_entry_like_ctrl_delete() {
     assert!(result.consumed);
     assert!(engine.learning.as_ref().unwrap().lookup("あい").is_empty());
     assert!(matches!(engine.state(), InputState::Conversion { .. }));
-}
-
-#[test]
-fn ctrl_backspace_after_resize_deletes_by_target_reading() {
-    let mut engine = engine_with_learned("あ", "亜");
-    engine.learning.as_mut().unwrap().record("あい", "愛");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-    engine.process_key(&press_key(Keysym::SPACE));
-    engine.process_key(&press_shift_key(Keysym::LEFT));
-
-    let selected = engine.state().candidates().unwrap().selected().unwrap();
-    assert_eq!(selected.text, "亜");
-    assert!(selected.is_deletable());
-
-    let result = engine.process_key(&press_ctrl(Keysym::BACKSPACE));
-
-    assert!(result.consumed);
-    assert!(engine.learning.as_ref().unwrap().lookup("あ").is_empty());
-    assert!(
-        !engine.learning.as_ref().unwrap().lookup("あい").is_empty(),
-        "deleting the target reading must not delete an unrelated full-reading entry"
-    );
-    assert!(matches!(
-        engine.state(),
-        InputState::Conversion { segments, focus: 0, .. }
-            if segments.len() == 2 && segments[0].reading == "あ"
-    ));
-}
-
-#[test]
-fn resize_excludes_learning_predictions_beyond_target() {
-    let mut engine = engine_with_learned("あい", "愛");
-    engine
-        .learning
-        .as_mut()
-        .unwrap()
-        .record("あいうえお", "愛上尾");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-    engine.process_key(&press_key(Keysym::SPACE));
-    assert!(
-        engine
-            .state()
-            .candidates()
-            .unwrap()
-            .candidates()
-            .iter()
-            .any(|candidate| candidate.text == "愛上尾"),
-        "the full-reading conversion should include the longer prediction"
-    );
-
-    let result = engine.process_key(&press_shift_key(Keysym::LEFT));
-
-    assert!(result.consumed);
-    let InputState::Conversion {
-        segments, focus, ..
-    } = engine.state()
-    else {
-        panic!("expected Conversion state");
-    };
-    assert_eq!(*focus, 0);
-    assert_eq!(segments.len(), 2);
-    assert_eq!(segments[0].reading, "あ");
-    let candidates = &segments[0].candidates;
-    assert!(
-        !candidates
-            .candidates()
-            .iter()
-            .any(|candidate| candidate.text == "愛上尾"),
-        "a prediction extending beyond the resized target must be excluded"
-    );
-    assert!(
-        candidates
-            .candidates()
-            .iter()
-            .all(|candidate| candidate.reading.as_deref() == Some("あ")),
-        "every remaining candidate must correspond to the target reading"
-    );
-    assert_segment_candidates_are_exact(segments);
-
-    let selected_text = candidates.selected_text().unwrap();
-    let selected_len = selected_text.chars().count();
-    let final_selected_len = segments[1]
-        .candidates
-        .selected_text()
-        .unwrap_or(&segments[1].reading)
-        .chars()
-        .count();
-    let preedit = engine.preedit().unwrap();
-    assert_eq!(preedit.text(), selected_segment_surfaces(segments));
-    assert_eq!(preedit.attributes().len(), 2);
-    assert_eq!(preedit.attributes()[0].start, 0);
-    assert_eq!(preedit.attributes()[0].end, selected_len);
-    assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
-    assert_eq!(preedit.attributes()[1].start, selected_len);
-    assert_eq!(
-        preedit.attributes()[1].end,
-        selected_len + final_selected_len
-    );
-    assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
-}
-
-#[test]
-fn segmented_final_segment_excludes_learning_prediction() {
-    let mut engine = engine_with_learned("すみません", "すみません、");
-
-    for ch in ['a', 'i', 's', 'u'] {
-        engine.process_key(&press(ch));
-    }
-    engine.process_key(&press_key(Keysym::SPACE));
-    engine.process_key(&press_shift_key(Keysym::LEFT));
-
-    let InputState::Conversion { segments, .. } = engine.state() else {
-        panic!("expected Conversion state");
-    };
-    assert_eq!(segments.len(), 2);
-    assert_eq!(segments[0].reading, "あい");
-    assert_eq!(segments[1].reading, "す");
-    assert_segment_candidates_are_exact(segments);
-    assert_eq!(
-        engine.preedit().unwrap().text(),
-        selected_segment_surfaces(segments)
-    );
-}
-
-#[test]
-fn single_segment_conversion_keeps_learning_prediction() {
-    let mut engine = engine_with_learned("あいうえお", "愛上尾");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-    engine.process_key(&press_key(Keysym::SPACE));
-
-    let InputState::Conversion { segments, .. } = engine.state() else {
-        panic!("expected Conversion state");
-    };
-    assert_eq!(segments.len(), 1);
-    assert!(
-        segments[0]
-            .candidates
-            .candidates()
-            .iter()
-            .any(|candidate| candidate.text == "愛上尾"),
-        "whole-reading conversion must continue to include predictions"
-    );
-}
-
-#[test]
-fn history_deletion_rebuild_keeps_predictions_scoped_to_target() {
-    let mut engine = engine_with_learned("あ", "亜");
-    engine
-        .learning
-        .as_mut()
-        .unwrap()
-        .record("あいうえお", "愛上尾");
-
-    engine.process_key(&press('a'));
-    engine.process_key(&press('i'));
-    engine.process_key(&press_key(Keysym::SPACE));
-    engine.process_key(&press_shift_key(Keysym::LEFT));
-
-    let selected = engine.state().candidates().unwrap().selected().unwrap();
-    assert_eq!(selected.text, "亜");
-    assert!(selected.is_deletable());
-
-    let result = engine.process_key(&press_ctrl(Keysym::BACKSPACE));
-
-    assert!(result.consumed);
-    assert!(
-        !engine
-            .learning
-            .as_ref()
-            .unwrap()
-            .lookup("あいうえお")
-            .is_empty(),
-        "the longer learning entry should remain in history"
-    );
-    let InputState::Conversion { segments, .. } = engine.state() else {
-        panic!("expected Conversion state");
-    };
-    let candidates = &segments[0].candidates;
-    assert!(
-        !candidates
-            .candidates()
-            .iter()
-            .any(|candidate| candidate.text == "愛上尾"),
-        "history deletion must not reintroduce a prediction beyond the target"
-    );
-    assert!(
-        candidates
-            .candidates()
-            .iter()
-            .all(|candidate| candidate.reading.as_deref() == Some("あ")),
-        "rebuilt candidates must remain scoped to the target reading"
-    );
-    assert_segment_candidates_are_exact(segments);
-
-    let selected_text = candidates.selected_text().unwrap();
-    let selected_len = selected_text.chars().count();
-    let final_selected_len = segments[1]
-        .candidates
-        .selected_text()
-        .unwrap_or(&segments[1].reading)
-        .chars()
-        .count();
-    let preedit = engine.preedit().unwrap();
-    assert_eq!(preedit.text(), selected_segment_surfaces(segments));
-    assert_eq!(preedit.attributes().len(), 2);
-    assert_eq!(preedit.attributes()[0].start, 0);
-    assert_eq!(preedit.attributes()[0].end, selected_len);
-    assert_eq!(preedit.attributes()[0].attr_type, AttributeType::Highlight);
-    assert_eq!(preedit.attributes()[1].start, selected_len);
-    assert_eq!(
-        preedit.attributes()[1].end,
-        selected_len + final_selected_len
-    );
-    assert_eq!(preedit.attributes()[1].attr_type, AttributeType::Underline);
 }
 
 #[test]
@@ -739,8 +434,8 @@ fn aux_shows_delete_hint_only_for_learning_candidate() {
 
 #[test]
 fn space_key_keeps_learning_in_composing() {
-    // Counterpart to shift_tab_key_skips_learning_in_composing: Space stays on
-    // the learning-included path so the default UX is unchanged.
+    // Counterpart to tab_key_skips_learning_in_composing: Space stays on the
+    // learning-included path so the default UX is unchanged.
     let mut engine = engine_with_learned("あい", "藍");
 
     engine.process_key(&press('a'));

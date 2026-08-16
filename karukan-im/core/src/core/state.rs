@@ -2,7 +2,7 @@
 //!
 //! Defines the states of the IME and transitions between them.
 
-use super::candidate::CandidateList;
+use super::candidate::{CandidateList, CandidateSource};
 use super::engine::Segment;
 use super::preedit::Preedit;
 
@@ -23,11 +23,15 @@ pub enum InputState {
     Conversion {
         /// The preedit string showing conversion result
         preedit: Preedit,
-        /// Uncommitted conversion segments. The concatenation of every
-        /// segment's reading always equals the engine input buffer text.
+        /// Uncommitted conversion segments. Their readings concatenate to
+        /// the settled composition reading.
         segments: Vec<Segment>,
-        /// Index of the focused segment (always in bounds for `segments`).
+        /// Index of the segment whose candidates are shown.
         focus: usize,
+        /// The (settled) reading the conversion was built from
+        reading: String,
+        /// Active Ctrl+R source filter; `None` shows the full list
+        filter: Option<CandidateSource>,
     },
 }
 
@@ -52,6 +56,22 @@ impl InputState {
             Self::Empty => None,
             Self::Composing { preedit, .. } => Some(preedit),
             Self::Conversion { preedit, .. } => Some(preedit),
+        }
+    }
+
+    /// Get the active source filter in conversion state
+    pub fn filter(&self) -> Option<CandidateSource> {
+        match self {
+            Self::Conversion { filter, .. } => *filter,
+            _ => None,
+        }
+    }
+
+    /// The reading a conversion was built from, if in the Conversion state.
+    pub fn reading(&self) -> Option<&str> {
+        match self {
+            Self::Conversion { reading, .. } => Some(reading),
+            _ => None,
         }
     }
 

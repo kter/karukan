@@ -7,6 +7,9 @@ use std::ptr;
 
 // XKB keysyms for common keys
 const XKB_KEY_A: u32 = 0x61;
+const XKB_KEY_V: u32 = 0x76;
+/// X11 ShiftMask | ControlMask
+const MOD_CTRL_SHIFT: u32 = 1 | 4;
 const XKB_KEY_I: u32 = 0x69;
 const XKB_KEY_K: u32 = 0x6b;
 const XKB_KEY_RETURN: u32 = 0xff0d;
@@ -40,6 +43,9 @@ impl TestEngine {
     fn new() -> Self {
         let ptr = karukan_engine_new();
         assert!(!ptr.is_null());
+        // The context tests read the aux line, which only carries the
+        // debug details in verbose mode (Ctrl+Shift+V).
+        karukan_engine_process_key(ptr, XKB_KEY_V, MOD_CTRL_SHIFT, 0);
         Self(ptr)
     }
 
@@ -192,6 +198,7 @@ fn test_commit_composing() {
 #[test]
 fn test_backspace() {
     let e = TestEngine::new();
+    disable_live_conversion(&e);
 
     // Type "ai" -> "あい"
     e.press(XKB_KEY_A);
@@ -547,6 +554,7 @@ fn test_ffi_shift_a_produces_uppercase_a() {
 #[test]
 fn test_ffi_shift_a_after_hiragana() {
     let e = TestEngine::new();
+    disable_live_conversion(&e);
 
     // Type "あ"
     e.press(XKB_KEY_A);
