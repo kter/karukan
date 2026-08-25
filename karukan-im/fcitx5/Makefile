@@ -13,9 +13,20 @@ SUDO ?= sudo
 # binary that runs on machines other than the one that built it.
 CMAKE_FLAGS ?=
 
-.PHONY: all deps build install install-user install-dict env-file restart test fmt lint clean
+.PHONY: all deps check-not-sudo build install install-user install-dict env-file restart test fmt lint clean
 
 all: build
+
+# Only the install step needs root. Under `sudo make` the cargo build runs as
+# root too, where rustup has no default toolchain and the build dies with
+# "could not choose a version of cargo to run". A plain root shell (no
+# SUDO_USER) is left alone — that one is deliberate.
+check-not-sudo:
+	@if [ -n "$$SUDO_USER" ]; then \
+		echo "Run this as your normal user: 'make $(MAKECMDGOALS)'."; \
+		echo "The install step elevates itself; 'sudo make' builds as root and rustup fails."; \
+		exit 1; \
+	fi
 
 # Debian/Ubuntu only. Other distros: see the package list in README.md.
 deps:
@@ -27,7 +38,7 @@ deps:
 
 # Configure and build the addon. The cmake project drives the cargo build of
 # karukan-fcitx5, so there is no separate cargo step here.
-build:
+build: check-not-sudo
 	cmake -B $(BUILD_DIR) -S $(ADDON_DIR) -DCMAKE_INSTALL_PREFIX=$(PREFIX) $(CMAKE_FLAGS)
 	cmake --build $(BUILD_DIR) -j
 
