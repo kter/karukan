@@ -118,6 +118,7 @@ impl InputMethodEngine {
         // Snapshot the live-conversion text before clearing it, so the
         // displayed candidate survives even if re-inference diverges.
         let prev_suggest_text = self.live_text_with_pending();
+        let prev_suggest_source = self.live_text_source();
         self.live.shown = false;
 
         if reading.is_empty() {
@@ -133,14 +134,21 @@ impl InputMethodEngine {
             learning,
         );
 
+        let preserved_position = candidates
+            .iter()
+            .take_while(|c| c.source == CandidateSource::Learning)
+            .count();
         let seen: HashSet<&str> = candidates.iter().map(|c| c.text.as_str()).collect();
+        let preserve_live_text =
+            learning == LearningLookup::Use || prev_suggest_source != CandidateSource::Learning;
         if !prev_suggest_text.is_empty()
             && prev_suggest_text != reading
             && !seen.contains(prev_suggest_text.as_str())
+            && preserve_live_text
         {
             candidates.insert(
-                0,
-                AnnotatedCandidate::new(prev_suggest_text, CandidateSource::Model),
+                preserved_position,
+                AnnotatedCandidate::new(prev_suggest_text, prev_suggest_source),
             );
         }
 

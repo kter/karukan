@@ -93,6 +93,8 @@ fn test_non_japanese_chunk_passes_through_and_japanese_stays_cached() {
     assert_eq!(readings, vec!["あい", "123"]);
     assert_eq!(engine.chunks[0].converted, "KEEP"); // cache hit, not reconverted
     assert_eq!(engine.chunks[1].converted, "123"); // non-Japanese chunk verbatim
+    assert_eq!(engine.chunks[0].source, ComposingChunkSource::Model);
+    assert_eq!(engine.chunks[1].source, ComposingChunkSource::Passthrough);
 }
 
 #[test]

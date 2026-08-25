@@ -258,18 +258,32 @@ impl ModeState {
     }
 }
 
-/// One internal chunk of the composing buffer with its cached model
-/// conversion. Chunks are invisible — the user sees the concatenation of
-/// every `converted` as one continuous preedit; splitting only bounds each
-/// model call for long input. The lctx a chunk was converted with is
-/// derived on demand (`chunk_lctx`), never stored.
+/// Where a composing chunk's converted text came from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::core) enum ComposingChunkSource {
+    /// Kana-kanji model output, including its reading fallback.
+    #[default]
+    Model,
+    /// An exact-match replay from the learning cache.
+    Learning,
+    /// A non-Japanese chunk passed through verbatim.
+    Passthrough,
+}
+
+/// One internal chunk of the composing buffer with its converted text.
+/// Chunks are invisible — the user sees the concatenation of every
+/// `converted` as one continuous preedit; splitting only bounds each model
+/// call for long input. The lctx a chunk was converted with is derived on
+/// demand (`chunk_lctx`), never stored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::core) struct ComposingChunk {
     /// Hiragana reading for this chunk (≤ N chars).
     pub reading: String,
-    /// Model conversion of `reading` — this chunk's slice of the live preedit.
-    /// Falls back to `reading` when the model yields nothing.
+    /// This chunk's slice of the live preedit. Model output falls back to
+    /// `reading` when the model yields nothing.
     pub converted: String,
+    /// Producer of `converted`, used to preserve authored learning surfaces.
+    pub source: ComposingChunkSource,
 }
 
 /// Live conversion state. The displayed text itself is not stored: it is

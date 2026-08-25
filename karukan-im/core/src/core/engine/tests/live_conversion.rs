@@ -1,6 +1,114 @@
 use super::*;
+use karukan_engine::{Width, WidthRules};
 
 // --- Live conversion tests ---
+
+fn learned_live_engine(reading: &str, surface: &str) -> InputMethodEngine {
+    let mut engine = engine_with_learned(reading, surface);
+    engine.live.enabled = true;
+    engine
+}
+
+fn committed_text(result: &EngineResult) -> Option<String> {
+    result.actions.iter().find_map(|action| match action {
+        EngineAction::Commit(text) => Some(text.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn learned_exact_match_drives_live_preedit_before_model() {
+    let mut engine = learned_live_engine("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+
+    assert_eq!(engine.preedit().unwrap().text(), "藍");
+    assert_eq!(engine.chunks[0].source, ComposingChunkSource::Learning);
+}
+
+#[test]
+fn enter_commits_learned_live_text_before_model() {
+    let mut engine = learned_live_engine("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+
+    assert_eq!(committed_text(&result).as_deref(), Some("藍"));
+}
+
+#[test]
+fn learned_live_replay_does_not_change_katakana_commit() {
+    let mut engine = learned_live_engine("あい", "藍");
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    assert_eq!(engine.preedit().unwrap().text(), "藍");
+
+    engine.process_key(&press_ctrl(Keysym::KEY_K));
+    assert_eq!(engine.preedit().unwrap().text(), "アイ");
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(committed_text(&result).as_deref(), Some("アイ"));
+}
+
+#[test]
+fn live_conversion_without_learning_still_uses_model_output() {
+    let mut engine = make_live_conversion_engine();
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    assert_eq!(engine.preedit().unwrap().text(), "愛");
+    assert_eq!(engine.chunks[0].source, ComposingChunkSource::Model);
+
+    let result = engine.process_key(&press_key(Keysym::RETURN));
+    assert_eq!(committed_text(&result).as_deref(), Some("愛"));
+}
+
+#[test]
+fn learned_live_chunk_keeps_width_while_model_chunk_settles() {
+    let config = EngineConfig {
+        live_conversion: true,
+        width: WidthRules {
+            digit: Width::Full,
+            ..WidthRules::default()
+        },
+        ..EngineConfig::default()
+    };
+
+    let mut learned = learned_live_engine("あい", "藍1");
+    learned.config = config.clone();
+    learned.process_key(&press('a'));
+    learned.process_key(&press('i'));
+    assert_eq!(learned.preedit().unwrap().text(), "藍1");
+
+    let mut model = InputMethodEngine::with_config(config);
+    seed_model_cache(&mut model, "アイ", "", &["愛1"]);
+    model.process_key(&press('a'));
+    model.process_key(&press('i'));
+    assert_eq!(model.preedit().unwrap().text(), "愛１");
+}
+
+#[test]
+fn emoji_mode_never_replays_a_learned_chunk() {
+    let mut engine = learned_live_engine("あい", "SHOULD_NOT_APPEAR");
+    engine.start_emoji_mode();
+    engine.input_char('あ');
+    engine.input_char('い');
+
+    assert_eq!(engine.preedit().unwrap().text(), ":あい");
+    let japanese = engine
+        .chunks
+        .iter()
+        .find(|chunk| chunk.reading == "あい")
+        .expect("Japanese query chunk");
+    assert_eq!(japanese.converted, "あい");
+    assert_eq!(japanese.source, ComposingChunkSource::Model);
+}
 
 #[test]
 fn test_live_conversion_disabled_by_default() {

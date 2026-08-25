@@ -599,6 +599,7 @@ fn test_filtered_conversion_replaces_live_display() {
     engine.chunks = vec![ComposingChunk {
         reading: "あい".to_string(),
         converted: "愛".to_string(),
+        source: ComposingChunkSource::Model,
     }];
     engine.live.shown = true;
 

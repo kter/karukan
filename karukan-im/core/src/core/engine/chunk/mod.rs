@@ -115,23 +115,46 @@ impl InputMethodEngine {
             .collect()
     }
 
-    /// Build one converted chunk: a reading containing any Japanese goes to
-    /// the model with `base_ctx` + `combined` as its left context (absorbed
-    /// marks included); a purely non-Japanese one passes through verbatim,
-    /// so digit and symbol runs stay exact.
+    /// Build one converted chunk: a purely non-Japanese reading passes
+    /// through, an exact learning hit replays without inference, and every
+    /// other Japanese reading goes to the model with `base_ctx` + `combined`
+    /// as its left context (absorbed marks included).
     fn convert_new_chunk(
         &mut self,
         reading: String,
         base_ctx: &str,
         combined: &str,
     ) -> ComposingChunk {
-        let converted = if reading.chars().any(is_japanese) {
-            let lctx = self.lctx_for(base_ctx, combined);
-            self.convert_chunk(&reading, &lctx)
+        let (converted, source) = if !reading.chars().any(is_japanese) {
+            (reading.clone(), ComposingChunkSource::Passthrough)
+        } else if let Some(learned) = self.learned_chunk(&reading) {
+            (learned, ComposingChunkSource::Learning)
         } else {
-            reading.clone()
+            let lctx = self.lctx_for(base_ctx, combined);
+            (
+                self.convert_chunk(&reading, &lctx),
+                ComposingChunkSource::Model,
+            )
         };
-        ComposingChunk { reading, converted }
+        ComposingChunk {
+            reading,
+            converted,
+            source,
+        }
+    }
+
+    /// Most recent exact learning hit for one chunk. Emoji buffers are
+    /// shortcode queries, not kana readings, so they never replay history.
+    fn learned_chunk(&self, reading: &str) -> Option<String> {
+        if self.mode.current() == InputMode::Emoji {
+            return None;
+        }
+        self.learning
+            .as_ref()?
+            .lookup(reading)
+            .into_iter()
+            .next()
+            .map(|(surface, _score)| surface)
     }
 
     /// Configured maximum chunk length in chars, clamped to at least 1.
