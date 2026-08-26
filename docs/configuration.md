@@ -111,6 +111,7 @@ CPU高負荷時（Rustビルド中など）にかな漢字変換が遅くなる�
 - 保存先: `~/.local/share/karukan-im/learning.tsv`（macOS: `~/Library/Application Support/com.karukan.karukan-im/learning.tsv`）
 - 完全一致と前方一致（予測変換）の両方に対応
   - 例: 「早稲田大学」を一度変換すると、次回「わせだ」と入力した時点で候補に表示
+- Chunk の読みに完全一致する学習結果は、モデルより先にライブ変換の表示と Enter 確定へ反映
 - 学習候補は変換時・入力中（auto-suggest）の両方で最大3件表示
 - スコアはrecency（最終使用日時）重視 + 頻度補正
 - 50文字（`max_surface_chars`）を超える変換結果は学習しない

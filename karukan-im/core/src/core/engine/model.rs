@@ -290,6 +290,10 @@ impl InputMethodEngine {
         // Nothing to beam (the reading ends outside Japanese): the grid
         // conversion is the only candidate.
         if span_start >= chars.len() {
+            // A learned grid prefix rides out as a model candidate here, so
+            // `settle_candidates` width-folds a spelling the user chose.
+            // Narrow (the reading must end outside Japanese) and not worth
+            // widening Vec<String> to carry each chunk's provenance.
             return if prefix == reading {
                 // Nothing converted, so there is no model answer here.
                 Vec::new()

@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::core::engine::display::LEARNING_DELETE_HINT;
+use karukan_engine::{Width, WidthRules};
 
 #[test]
 fn build_candidates_includes_learning_when_not_skipped() {
@@ -458,4 +459,126 @@ fn space_key_keeps_learning_in_composing() {
         "Space must surface learned `藍`, got {:?}",
         texts,
     );
+}
+
+#[test]
+fn space_keeps_learning_ahead_of_preserved_live_text() {
+    let mut engine = engine_with_learned("あい", "藍");
+    engine.live.enabled = true;
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    // Preserve a model spelling that differs from the learning replay to
+    // exercise its insertion point rather than the duplicate fast path.
+    set_live_text(&mut engine, "愛");
+
+    engine.process_key(&press_key(Keysym::SPACE));
+    let candidates = engine.state().candidates().unwrap().candidates();
+
+    assert_eq!(candidates[0].text, "藍");
+    assert_eq!(candidates[0].source, Some(CandidateSource::Learning));
+    assert_eq!(candidates[1].text, "愛");
+    assert_eq!(candidates[1].source, Some(CandidateSource::Model));
+}
+
+#[test]
+fn learned_live_replay_remains_first_after_space() {
+    let mut engine = engine_with_learned("あい", "藍");
+    engine.live.enabled = true;
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+
+    engine.process_key(&press_key(Keysym::SPACE));
+    let first = &engine.state().candidates().unwrap().candidates()[0];
+    assert_eq!(first.text, "藍");
+    assert_eq!(first.source, Some(CandidateSource::Learning));
+}
+
+#[test]
+fn learned_chunk_is_replayed_in_model_candidate_prefix() {
+    let mut engine = engine_with_learned("あい", "藍");
+    engine.config.chunk_chars = 2;
+    engine.config.beam_chars = 2;
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    seed_model_cache(&mut engine, "ウエ", "藍", &["上"]);
+
+    let candidates = engine.model_candidates("あいうえ", 1);
+
+    assert_eq!(candidates, vec!["藍上"]);
+}
+
+#[test]
+fn shift_tab_drops_learned_live_replay() {
+    let mut engine = engine_with_learned("あい", "藍");
+    engine.live.enabled = true;
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    engine.process_key(&press('a'));
+    engine.process_key(&press('i'));
+    assert_eq!(engine.live_text(), "藍");
+
+    engine.process_key(&press_key(Keysym::ISO_LEFT_TAB));
+    let candidates = engine.state().candidates().unwrap().candidates();
+
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.source != Some(CandidateSource::Learning))
+    );
+    assert!(candidates.iter().all(|candidate| candidate.text != "藍"));
+}
+
+#[test]
+fn preserved_multichunk_learning_text_keeps_its_width() {
+    let mut engine = engine_with_learned("あい", "藍1");
+    engine.live.enabled = true;
+    engine.config.chunk_chars = 2;
+    engine.config.beam_chars = 2;
+    engine.config.width = WidthRules {
+        digit: Width::Full,
+        ..WidthRules::default()
+    };
+    for ch in ['a', 'i', 'u', 'e'] {
+        engine.process_key(&press(ch));
+    }
+    let displayed = engine.live_text();
+    assert_eq!(displayed, "藍1うえ");
+
+    engine.process_key(&press_key(Keysym::SPACE));
+    let candidates = engine.state().candidates().unwrap().candidates();
+
+    assert!(
+        candidates
+            .iter()
+            .any(|candidate| candidate.text == displayed)
+    );
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.text != "藍１うえ")
+    );
+}
+
+#[test]
+fn preserved_learning_live_candidate_is_deletable() {
+    let mut engine = engine_with_learned("あい", "藍1");
+    engine.live.enabled = true;
+    engine.config.chunk_chars = 2;
+    engine.config.beam_chars = 2;
+    for ch in ['a', 'i', 'u', 'e'] {
+        engine.process_key(&press(ch));
+    }
+    let displayed = engine.live_text();
+
+    engine.process_key(&press_key(Keysym::SPACE));
+    let candidate = engine
+        .state()
+        .candidates()
+        .unwrap()
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.text == displayed)
+        .expect("preserved live candidate");
+
+    assert_eq!(candidate.source, Some(CandidateSource::Learning));
+    assert!(candidate.is_deletable());
 }

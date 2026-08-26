@@ -29,6 +29,14 @@ sudo apt install fcitx5 fcitx5-modules-dev libfcitx5core-dev \
 `/usr` にインストールします。sudo が必要ですが、`FCITX_ADDON_DIRS` の設定は不要です。
 
 ```bash
+cd karukan-im/fcitx5
+make install    # ビルド + インストール + システム辞書のダウンロード
+make restart    # fcitx5 を再起動（ログを表示したまま）
+```
+
+`make` を使わない場合は以下と同じです（辞書は [docs/dictionary.md](../../docs/dictionary.md) を参照）:
+
+```bash
 cd karukan-im/fcitx5/fcitx5-addon
 cmake -B build -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build build -j
@@ -48,6 +56,13 @@ fcitx5 -r
 `~/.local` にインストールします。sudo 不要ですが、`FCITX_ADDON_DIRS` の手動設定が必要です。
 
 ```bash
+cd karukan-im/fcitx5
+make install-user
+```
+
+`make` を使わない場合:
+
+```bash
 cd karukan-im/fcitx5/fcitx5-addon
 cmake -B build -DCMAKE_INSTALL_PREFIX=$HOME/.local
 cmake --build build -j
@@ -55,6 +70,12 @@ cmake --install build
 ```
 
 ローカルインストールの場合、fcitx5 がアドオンを見つけられるように `FCITX_ADDON_DIRS` を設定する必要があります。fcitx5 はログインセッション開始時に起動されるため、シェルプロファイルではなく `~/.config/environment.d/` に設定してください:
+
+```bash
+make env-file
+```
+
+これは以下と同じです:
 
 ```bash
 mkdir -p ~/.config/environment.d

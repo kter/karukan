@@ -30,10 +30,35 @@ impl InputMethodEngine {
         if !self.live.shown {
             return String::new();
         }
-        // Model output, so it settles here: the prompt is NFKC-normalized
-        // and the answer comes back half-width whatever was typed.
-        let converted: String = self.chunks.iter().map(|c| c.converted.as_str()).collect();
-        self.settle_text(&converted)
+        let mut converted = String::new();
+        for chunk in &self.chunks {
+            if chunk.source == ComposingChunkSource::Learning {
+                // The user chose this spelling, including its width.
+                converted.push_str(&chunk.converted);
+            } else {
+                // Model output settles here because its prompt is
+                // NFKC-normalized. Passthrough is unchanged by settling.
+                converted.push_str(&self.settle_text(&chunk.converted));
+            }
+        }
+        converted
+    }
+
+    /// Source of the displayed live text. Any learned chunk makes the
+    /// preserved whole-text candidate learning-derived. Gated on
+    /// `live.shown` like [`Self::live_text`], so the pair can't disagree
+    /// about whether there is a live text at all.
+    pub(super) fn live_text_source(&self) -> CandidateSource {
+        if !self.live.shown {
+            return CandidateSource::Model;
+        }
+        if self.chunks.iter().any(|chunk| {
+            !chunk.converted.is_empty() && chunk.source == ComposingChunkSource::Learning
+        }) {
+            CandidateSource::Learning
+        } else {
+            CandidateSource::Model
+        }
     }
 
     /// Build a preedit for composing state.
