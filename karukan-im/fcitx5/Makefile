@@ -4,6 +4,7 @@ CARGO_MANIFEST = ../../Cargo.toml
 DATA_DIR = $(HOME)/.local/share/karukan-im
 DICT_URL = https://github.com/togatoga/karukan/releases/latest/download/dict.tgz
 ENV_FILE = $(HOME)/.config/environment.d/fcitx5-karukan.conf
+LOG_FILE = $(HOME)/.cache/karukan-im/fcitx5.log
 
 # System install by default. `install-user` re-enters with the user-local
 # prefix and no sudo, so both paths share one build/install recipe.
@@ -83,10 +84,45 @@ env-file:
 		echo "Wrote $(ENV_FILE):" && cat "$(ENV_FILE)"
 	@echo "Log out and back in for this to take effect."
 
-# Replace the running fcitx5 and keep it in the foreground with logs, so
-# 'Loaded addon karukan' and the model download progress are visible.
+# Stop the running fcitx5, wait for it to actually exit, then start a fresh
+# daemon. `fcitx5 -r` starts the new instance and evicts the old one
+# concurrently, so the two overlap and nothing here can tell whether the
+# result is the instance we asked for; stopping first makes the order
+# deterministic and lets the PID check below actually mean something.
+#
+# The log goes to $(LOG_FILE) rather than the terminal. Under `-d` fcitx5
+# keeps the inherited stdout after make has exited, so its output arrives at
+# a prompt that has already returned (and `make restart | ...` never
+# finishes, because the daemon holds the pipe open). A file keeps the
+# terminal usable and keeps the startup errors readable after the fact.
+#
+# NOTE: restarting fcitx5 does not restore input in clients that were already
+# running -- X11/XWayland apps in particular hold their XIM connection to the
+# dead instance. If typing stops working in a window that was open across the
+# restart, restart that application.
 restart:
-	fcitx5 -r -d
+	@mkdir -p "$(dir $(LOG_FILE))"
+	@old=$$(pgrep -x fcitx5 || true); \
+	if [ -n "$$old" ]; then \
+		echo "Stopping fcitx5 (pid $$old) ..."; \
+		kill $$old 2>/dev/null || true; \
+		i=0; while pgrep -x fcitx5 >/dev/null && [ $$i -lt 50 ]; do sleep 0.1; i=$$((i+1)); done; \
+		if pgrep -x fcitx5 >/dev/null; then \
+			echo "Did not exit in 5s; sending SIGKILL."; \
+			pkill -KILL -x fcitx5 || true; sleep 0.5; \
+		fi; \
+	fi; \
+	fcitx5 -d >"$(LOG_FILE)" 2>&1; \
+	i=0; while [ $$i -lt 50 ] && ! pgrep -x fcitx5 >/dev/null; do sleep 0.1; i=$$((i+1)); done; \
+	new=$$(pgrep -x fcitx5 || true); \
+	if [ -z "$$new" ]; then \
+		echo "ERROR: fcitx5 did not start. Log: $(LOG_FILE)"; exit 1; \
+	fi; \
+	if [ "$$new" = "$$old" ]; then \
+		echo "ERROR: fcitx5 (pid $$new) was never replaced. Log: $(LOG_FILE)"; exit 1; \
+	fi; \
+	echo "fcitx5 restarted (pid $$new). Log: $(LOG_FILE)"; \
+	echo "Check that the addon came up with: grep karukan $(LOG_FILE)"
 
 test:
 	cargo test --manifest-path $(CARGO_MANIFEST) -p karukan-fcitx5 -p karukan-im
