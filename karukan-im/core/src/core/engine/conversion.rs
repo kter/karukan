@@ -504,6 +504,14 @@ impl InputMethodEngine {
             builder.push(AnnotatedCandidate::new(hiragana, CandidateSource::Fallback));
             builder.push(AnnotatedCandidate::new(katakana, CandidateSource::Fallback));
         }
+        // Date/time candidates sit above the width/kana variants; like the
+        // rewriters they derive from the typed reading alone.
+        for (variant, description) in self.date_variants(reading) {
+            builder.push(
+                AnnotatedCandidate::new(variant, CandidateSource::Date)
+                    .with_description(description),
+            );
+        }
         // Rewriters run on the typed reading only; running them on other
         // sources' candidates would emit variants nobody asked for.
         for (variant, description) in self.rewriter_variants(reading) {
@@ -633,18 +641,36 @@ impl InputMethodEngine {
             .rewrite_all(&[reading.to_string()])
     }
 
+    /// Date/time candidates for `reading` (`[date]` phrases). None in emoji
+    /// mode — the picker shows emojis only.
+    pub(super) fn date_variants(&self, reading: &str) -> Vec<RewriteOutput> {
+        if self.mode.current() == InputMode::Emoji {
+            return Vec::new();
+        }
+        self.converters.date.rewrite(reading)
+    }
+
     /// Build rule-based rewriter variants for the reading itself (e.g. for
-    /// symbol input `「` → `『`, `【`, `（`, ...). Used in the auto-suggest path
-    /// so users see mozc-style symbol variants without pressing Space first.
+    /// symbol input `「` → `『`, `【`, `（`, ...), date/time candidates first.
+    /// Used in the auto-suggest path so users see mozc-style symbol variants
+    /// without pressing Space first, and as the body of the Ctrl+R view.
     pub(super) fn lookup_rewriter_variants(&self, reading: &str) -> Vec<Candidate> {
-        self.rewriter_variants(reading)
-            .into_iter()
-            .map(|(text, description)| Candidate {
+        let as_candidate = |source: CandidateSource| {
+            move |(text, description): RewriteOutput| Candidate {
                 text,
                 reading: Some(reading.to_string()),
-                source: Some(CandidateSource::Rewriter),
+                source: Some(source),
                 description,
-            })
+            }
+        };
+        self.date_variants(reading)
+            .into_iter()
+            .map(as_candidate(CandidateSource::Date))
+            .chain(
+                self.rewriter_variants(reading)
+                    .into_iter()
+                    .map(as_candidate(CandidateSource::Rewriter)),
+            )
             .collect()
     }
 
@@ -920,23 +946,30 @@ impl InputMethodEngine {
     pub(super) fn selected_conversion_info(&self) -> Option<(String, Vec<(String, String)>)> {
         match &self.state {
             InputState::Conversion { segments, .. } => {
-                let selections: Vec<_> = segments
-                    .iter()
-                    .map(|segment| {
-                        (
-                            segment.reading.clone(),
-                            segment
-                                .candidates
-                                .selected_text()
-                                .unwrap_or(&segment.reading)
-                                .to_string(),
-                        )
-                    })
-                    .collect();
-                let text = selections
-                    .iter()
-                    .map(|(_, surface)| surface.as_str())
-                    .collect();
+                let mut text = String::new();
+                let mut selections = Vec::new();
+                for segment in segments {
+                    // An empty (source-filtered) view displays the raw
+                    // reading as its preedit, so that is what committing
+                    // produces — never an empty commit that would eat the
+                    // composition.
+                    let surface = segment
+                        .candidates
+                        .selected_text()
+                        .unwrap_or(&segment.reading)
+                        .to_string();
+                    // The pair rides along solely for the learning record;
+                    // a non-learnable source (a date is stale tomorrow) is
+                    // left out so nothing is recorded for that segment.
+                    let learnable = segment
+                        .candidates
+                        .selected()
+                        .is_none_or(|c| c.source.is_none_or(|s| s.is_learnable()));
+                    if learnable {
+                        selections.push((segment.reading.clone(), surface.clone()));
+                    }
+                    text.push_str(&surface);
+                }
                 Some((text, selections))
             }
             _ => None,
