@@ -7,6 +7,7 @@ use crate::core::keycode::KeyModifiers;
 
 mod alphabet;
 mod basic;
+mod candidate_window;
 mod candidates;
 mod chunks;
 mod conversion;
@@ -19,8 +20,10 @@ mod live_conversion;
 mod mode_toggle;
 mod passthrough;
 mod pending_romaji;
+mod persona;
 mod predictive;
 mod rewriter;
+mod single_kanji;
 mod source_filter;
 mod strategy;
 mod surrounding;
