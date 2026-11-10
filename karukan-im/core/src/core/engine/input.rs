@@ -226,6 +226,10 @@ impl InputMethodEngine {
                 Keysym::KEY_J | Keysym::KEY_J_UPPER => return self.insert_chunk_break(),
                 // Ctrl+K: enter katakana mode
                 Keysym::KEY_K | Keysym::KEY_K_UPPER => return self.enter_katakana_mode(),
+                // Ctrl+L: enter alphabet mode without inserting a letter
+                Keysym::KEY_L | Keysym::KEY_L_UPPER if !key.modifiers.shift_key => {
+                    return self.enter_alphabet_mode();
+                }
                 // Ctrl+A: move to beginning (Emacs-style Home)
                 Keysym::KEY_A | Keysym::KEY_A_UPPER => return self.move_caret_home(),
                 // Ctrl+B: move left (Emacs-style Left)
@@ -289,18 +293,7 @@ impl InputMethodEngine {
                         || (key.modifiers.shift_key && ch.is_ascii_alphabetic());
 
                     if is_shift_alpha && self.mode.current() != InputMode::Alphabet {
-                        // Bake katakana before switching so preedit doesn't
-                        // revert; in kana mode the live romaji stays live so
-                        // typing next to it can still combine
-                        if self.mode.current() == InputMode::Katakana {
-                            self.settle_romaji();
-                            self.bake_katakana();
-                        }
-                        // Shift-alphabet is a temporary per-word mode:
-                        // ModeState remembers the mode to restore on
-                        // commit/cancel, so the next word returns to the
-                        // prior mode (issue #37).
-                        self.mode.enter_temporary(InputMode::Alphabet);
+                        self.switch_to_alphabet();
                         self.live.shown = false;
                     }
                     let ch = if self.mode.current() == InputMode::Alphabet && is_shift_alpha {

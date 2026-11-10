@@ -335,3 +335,186 @@ fn test_reset_clears_alphabet_mode() {
     engine.reset();
     assert!(engine.mode.current() != InputMode::Alphabet);
 }
+
+#[test]
+fn ctrl_l_matches_shift_letter_backspace_without_inserting_text() {
+    for keysym in [Keysym::KEY_L, Keysym::KEY_L_UPPER] {
+        let mut direct = InputMethodEngine::new();
+        let mut reference = InputMethodEngine::new();
+        for ch in "watashiha".chars() {
+            direct.process_key(&press(ch));
+            reference.process_key(&press(ch));
+        }
+        let result = direct.process_key(&press_ctrl(keysym));
+        assert!(result.consumed);
+        assert_eq!(direct.preedit().unwrap().text(), "わたしは");
+        assert!(last_aux_text(&result).unwrap().contains("[A]"));
+        assert!(!direct.live.enabled);
+
+        reference.process_key(&press_shift('A'));
+        reference.process_key(&press_key(Keysym::BACKSPACE));
+        for ch in "linux".chars() {
+            direct.process_key(&press(ch));
+            reference.process_key(&press(ch));
+        }
+        assert_eq!(direct.preedit().unwrap().text(), "わたしはlinux");
+        assert_eq!(
+            direct.preedit().unwrap().text(),
+            reference.preedit().unwrap().text()
+        );
+        assert_eq!(
+            direct.preedit().unwrap().caret(),
+            reference.preedit().unwrap().caret()
+        );
+        assert_eq!(direct.mode.current(), reference.mode.current());
+        direct.process_key(&press_key(Keysym::RETURN));
+        reference.process_key(&press_key(Keysym::RETURN));
+        assert_eq!(direct.mode.current(), InputMode::Hiragana);
+        assert_eq!(direct.mode.current(), reference.mode.current());
+    }
+}
+
+#[test]
+fn ctrl_l_in_alphabet_or_emoji_is_consumed_noop() {
+    for emoji in [false, true] {
+        let mut engine = InputMethodEngine::new();
+        if emoji {
+            engine.process_key(&press(':'));
+        } else {
+            engine.process_key(&press_shift('A'));
+        }
+        let mode = engine.mode.current();
+        let before = engine.preedit().unwrap().clone();
+        for keysym in [Keysym::KEY_L, Keysym::KEY_L_UPPER] {
+            let result = engine.process_key(&press_ctrl(keysym));
+            assert!(result.consumed);
+            assert!(result.actions.is_empty());
+            assert_eq!(engine.mode.current(), mode);
+            assert_eq!(engine.preedit().unwrap().text(), before.text());
+            assert_eq!(engine.preedit().unwrap().caret(), before.caret());
+        }
+    }
+}
+
+#[test]
+fn ctrl_l_in_empty_passes_through_without_changing_mode() {
+    for mode in [InputMode::Hiragana, InputMode::Katakana] {
+        let mut engine = InputMethodEngine::new();
+        engine.mode.set(mode);
+        for keysym in [Keysym::KEY_L, Keysym::KEY_L_UPPER] {
+            let result = engine.process_key(&press_ctrl(keysym));
+            assert!(!result.consumed);
+            assert!(result.actions.is_empty());
+            assert!(matches!(engine.state(), InputState::Empty));
+            assert_eq!(engine.mode.current(), mode);
+        }
+    }
+}
+
+#[test]
+fn ctrl_l_restores_prior_kana_mode_on_commit_or_cancel() {
+    for katakana in [false, true] {
+        for end_key in [Keysym::RETURN, Keysym::ESCAPE] {
+            let mut engine = InputMethodEngine::new();
+            for ch in "kan".chars() {
+                engine.process_key(&press(ch));
+            }
+            let prior_mode = if katakana {
+                engine.process_key(&press_ctrl(Keysym::KEY_K));
+                InputMode::Katakana
+            } else {
+                InputMode::Hiragana
+            };
+            let before = engine.preedit().unwrap().text().to_string();
+            engine.process_key(&press_ctrl(Keysym::KEY_L));
+            assert_eq!(engine.mode.current(), InputMode::Alphabet);
+            assert_eq!(engine.preedit().unwrap().text(), before);
+            if katakana {
+                assert_eq!(engine.input_buf.reading(), "カn");
+                assert!(engine.input_buf.pending().is_empty());
+            }
+            for ch in "linux".chars() {
+                engine.process_key(&press(ch));
+            }
+            let result = engine.process_key(&press_key(end_key));
+            if end_key == Keysym::RETURN {
+                let expected = format!("{before}linux");
+                assert!(
+                    result
+                        .actions
+                        .iter()
+                        .any(|a| matches!(a, EngineAction::Commit(text) if text == &expected))
+                );
+            }
+            assert!(matches!(engine.state(), InputState::Empty));
+            assert_eq!(engine.mode.current(), prior_mode);
+        }
+    }
+}
+
+#[test]
+fn ctrl_l_preserves_live_preedit_and_updates_mode_indicator() {
+    let mut engine = make_live_conversion_engine();
+    seed_model_cache(&mut engine, "アイ", "", &["愛"]);
+    for ch in "ai".chars() {
+        engine.process_key(&press(ch));
+    }
+    let before = engine.preedit().unwrap().clone();
+    assert_eq!(before.text(), "愛");
+
+    let result = engine.process_key(&press_ctrl(Keysym::KEY_L));
+    assert!(result.consumed);
+    assert_eq!(engine.preedit().unwrap().text(), before.text());
+    assert_eq!(engine.preedit().unwrap().caret(), before.caret());
+    assert!(
+        result
+            .actions
+            .iter()
+            .any(|a| matches!(a, EngineAction::UpdatePreedit(preedit) if preedit.text() == before.text() && preedit.caret() == before.caret()))
+    );
+    assert!(last_aux_text(&result).unwrap().contains("[A]"));
+    assert_eq!(engine.mode.current(), InputMode::Alphabet);
+    assert!(engine.live.enabled);
+    assert!(engine.live.shown);
+}
+
+#[test]
+fn ctrl_l_leaves_conversion_unchanged() {
+    let mut engine = InputMethodEngine::new();
+    engine.process_key(&press('a'));
+    engine.process_key(&press_key(Keysym::SPACE));
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    let before = engine.preedit().unwrap().clone();
+    let result = engine.process_key(&press_ctrl(Keysym::KEY_L));
+    assert!(result.consumed);
+    assert_eq!(engine.mode.current(), InputMode::Hiragana);
+    assert!(matches!(engine.state(), InputState::Conversion { .. }));
+    assert_eq!(engine.preedit().unwrap().text(), before.text());
+    assert_eq!(engine.preedit().unwrap().caret(), before.caret());
+}
+
+#[test]
+fn ctrl_shift_l_still_toggles_live_conversion_in_every_state() {
+    for keysym in [Keysym::KEY_L, Keysym::KEY_L_UPPER] {
+        for state in 0..3 {
+            let mut engine = InputMethodEngine::new();
+            if state > 0 {
+                engine.process_key(&press('a'));
+            }
+            if state == 2 {
+                engine.process_key(&press_key(Keysym::SPACE));
+            }
+            for enabled in [true, false] {
+                let result = engine.process_key(&press_ctrl_shift(keysym));
+                assert!(result.consumed);
+                assert_eq!(engine.live.enabled, enabled);
+                assert_eq!(engine.mode.current(), InputMode::Hiragana);
+                assert!(match state {
+                    0 => matches!(engine.state(), InputState::Empty),
+                    1 => matches!(engine.state(), InputState::Composing { .. }),
+                    _ => matches!(engine.state(), InputState::Conversion { .. }),
+                });
+            }
+        }
+    }
+}

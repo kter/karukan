@@ -1,10 +1,36 @@
-//! Mode switching (katakana, alphabet, live conversion)
+//! Mode switching (Ctrl+K katakana, Ctrl+L / Shift+letter temporary alphabet, live conversion)
 
 use tracing::debug;
 
 use super::*;
 
 impl InputMethodEngine {
+    /// Enter temporary alphabet mode, preserving katakana already displayed.
+    /// Shared by Shift+letter and Ctrl+L; commit/cancel restores the prior kana mode.
+    pub(super) fn switch_to_alphabet(&mut self) {
+        // Keep hiragana's pending romaji live so it can combine after returning to kana.
+        if self.mode.current() == InputMode::Katakana {
+            self.settle_romaji();
+            self.bake_katakana();
+        }
+        self.mode.enter_temporary(InputMode::Alphabet);
+    }
+
+    /// Ctrl+L while composing: enter alphabet mode without inserting a letter.
+    /// Already in Alphabet or Emoji: consume the key without changing anything.
+    pub(super) fn enter_alphabet_mode(&mut self) -> EngineResult {
+        if matches!(self.mode.current(), InputMode::Alphabet | InputMode::Emoji) {
+            return EngineResult::consumed();
+        }
+
+        self.switch_to_alphabet();
+        // Redraw the existing live result without re-running suggestions.
+        let preedit = self.set_composing_state();
+        EngineResult::consumed()
+            .with_action(EngineAction::UpdatePreedit(preedit))
+            .with_action(EngineAction::UpdateAuxText(self.format_aux_suggest()))
+    }
+
     /// Enter katakana mode (Ctrl+k)
     /// One-way switch to Katakana; a mode toggle key (Right Super, JIS 変換,
     /// macOS かな/right-⌘ tap) returns to Hiragana.
